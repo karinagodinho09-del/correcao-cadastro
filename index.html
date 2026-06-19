@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Correção de Cadastro — TGMAQ</title>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+<style>
+:root{--bg:#0d0f14;--bg2:#13161e;--bg3:#1a1e28;--bg4:#222738;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);--text:#e2e6f0;--text2:#8b93a8;--text3:#4a5168;--blue:#4f7ef8;--blue2:#3a63d4;--blue-bg:rgba(79,126,248,0.1);--green:#34d399;--green-bg:rgba(52,211,153,0.08);--amber:#fbbf24;--amber-bg:rgba(251,191,36,0.08);--red:#f87171;--red-bg:rgba(248,113,113,0.08);--purple:#a78bfa;--purple-bg:rgba(167,139,250,0.08);--teal:#22d3ee;--teal-bg:rgba(34,211,238,0.08);--r:7px;--r2:11px;font-family:'Segoe UI',system-ui,sans-serif;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);min-height:100vh;font-size:13px;}
+.shell{display:flex;flex-direction:column;height:100vh;}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);height:50px;display:flex;align-items:center;padding:0 18px;gap:12px;flex-shrink:0;}
+.logo{font-size:14px;font-weight:700;color:var(--blue);}
+.logo span{color:var(--text2);font-weight:400;}
+.topbar-mid{display:flex;gap:7px;margin-left:auto;}
+.stat{background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 11px;font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px;}
+.stat .dot{width:5px;height:5px;border-radius:50%;}
+.body{display:flex;flex:1;overflow:hidden;}
+.sidebar{width:255px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;}
+.sb-sec{padding:13px 13px;border-bottom:1px solid var(--border);}
+.sb-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--text3);margin-bottom:9px;}
+.upload-zone{border:1px dashed var(--border2);border-radius:var(--r);padding:13px;text-align:center;cursor:pointer;color:var(--text2);font-size:12px;transition:.2s;}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--blue);background:var(--blue-bg);color:var(--blue);}
+.upload-zone.done{border-color:var(--green);background:var(--green-bg);color:var(--green);}
+.upload-zone input{display:none;}
+.btn{padding:7px 13px;border-radius:var(--r);border:none;cursor:pointer;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;transition:.15s;white-space:nowrap;}
+.btn-primary{background:var(--blue);color:#fff;}
+.btn-primary:hover{background:var(--blue2);}
+.btn-secondary{background:var(--bg3);border:1px solid var(--border2);color:var(--text2);}
+.btn-secondary:hover{background:var(--bg4);color:var(--text);}
+.btn-success{background:var(--green-bg);border:1px solid rgba(52,211,153,.25);color:var(--green);}
+.btn-danger{background:var(--red-bg);border:1px solid rgba(248,113,113,.25);color:var(--red);}
+.btn-full{width:100%;justify-content:center;}
+.btn-sm{padding:4px 9px;font-size:11px;}
+.btn:disabled{opacity:.35;cursor:not-allowed;}
+.filter-select,.filter-input{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:6px 9px;color:var(--text);font-size:12px;width:100%;}
+.filter-select:focus,.filter-input:focus{outline:none;border-color:var(--blue);}
+.stack{display:flex;flex-direction:column;gap:6px;}
+.prog-wrap{background:var(--bg4);border-radius:4px;height:3px;overflow:hidden;margin-top:8px;}
+.prog-bar{height:100%;background:var(--blue);border-radius:4px;transition:width .3s;}
+.content{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+.toolbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 13px;display:flex;gap:8px;align-items:center;flex-shrink:0;}
+.search-box{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:6px 10px;color:var(--text);font-size:12px;flex:1;max-width:300px;}
+.search-box:focus{outline:none;border-color:var(--blue);}
+.toolbar-right{margin-left:auto;display:flex;gap:7px;align-items:center;}
+.tbl-wrap{flex:1;overflow:auto;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+thead{position:sticky;top:0;z-index:5;}
+th{background:var(--bg2);padding:7px 10px;text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);border-bottom:1px solid var(--border);white-space:nowrap;}
+td{padding:5px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+tr:hover td{background:rgba(255,255,255,.02);}
+.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:500;white-space:nowrap;}
+.badge-pend{background:var(--red-bg);color:var(--red);border:1px solid rgba(248,113,113,.2);}
+.badge-banco{background:var(--green-bg);color:var(--green);border:1px solid rgba(52,211,153,.2);}
+.badge-web{background:var(--teal-bg);color:var(--teal);border:1px solid rgba(34,211,238,.2);}
+.badge-ai{background:var(--purple-bg);color:var(--purple);border:1px solid rgba(167,139,250,.2);}
+.badge-ok{background:var(--green-bg);color:var(--green);border:1px solid rgba(52,211,153,.2);opacity:.5;}
+.badge-salvo{background:var(--green-bg);color:var(--green);border:1px solid rgba(52,211,153,.3);}
+.badge-manual{background:var(--amber-bg);color:var(--amber);border:1px solid rgba(251,191,36,.2);}
+.desc-orig{color:var(--text3);font-size:10px;text-decoration:line-through;display:block;}
+.cell-in{background:transparent;border:1px solid transparent;border-radius:4px;padding:2px 5px;color:var(--text);font-size:12px;width:100%;min-width:160px;}
+.cell-in:hover{border-color:var(--border2);}
+.cell-in:focus{outline:none;border-color:var(--blue);background:var(--bg3);}
+.sub-sel{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px;width:100%;max-width:230px;}
+.sub-sel:focus{outline:none;border-color:var(--blue);}
+.sub-sel.ch{border-color:var(--amber);}
+.grp-tag{font-size:10px;color:var(--text3);}
+.act-cell{display:flex;gap:4px;}
+.pagbar{background:var(--bg2);border-top:1px solid var(--border);padding:6px 13px;display:flex;align-items:center;gap:8px;flex-shrink:0;font-size:12px;color:var(--text2);}
+.pg-btn{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:3px 9px;cursor:pointer;color:var(--text2);font-size:11px;}
+.pg-btn:hover{background:var(--bg4);}
+.pg-btn:disabled{opacity:.3;cursor:not-allowed;}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;flex-direction:column;align-items:center;justify-content:center;z-index:100;}
+.overlay.show{display:flex;}
+.spinner{width:36px;height:36px;border:3px solid var(--border2);border-top-color:var(--blue);border-radius:50%;animation:spin .7s linear infinite;margin-bottom:12px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ov-text{color:var(--text2);font-size:13px;}
+.ov-prog{color:var(--blue);font-size:12px;margin-top:5px;}
+.toast-el{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(70px);background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:9px 18px;font-size:13px;z-index:200;transition:.25s;pointer-events:none;}
+.toast-el.show{transform:translateX(-50%) translateY(0);}
+.toast-el.ok{border-color:rgba(52,211,153,.4);color:var(--green);}
+.toast-el.err{border-color:rgba(248,113,113,.4);color:var(--red);}
+.toast-el.info{border-color:rgba(79,126,248,.4);color:var(--blue);}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:300;}
+.modal-bg.show{display:flex;}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r2);padding:24px;width:480px;max-width:95vw;}
+.modal h2{font-size:15px;font-weight:600;margin-bottom:5px;}
+.modal p{font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6;}
+.modal label{font-size:11px;color:var(--text2);display:block;margin-bottom:3px;margin-top:9px;}
+.modal input{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:7px 10px;color:var(--text);font-size:12px;width:100%;}
+.modal input:focus{outline:none;border-color:var(--blue);}
+.modal-actions{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--text3);gap:10px;padding:40px;text-align:center;}
+.db-status{display:flex;align-items:center;gap:6px;font-size:11px;}
+.db-dot{width:7px;height:7px;border-radius:50%;background:var(--text3);}
+.db-dot.ok{background:var(--green);}
+.db-dot.err{background:var(--red);}
+.info-text{font-size:11px;color:var(--text3);text-align:center;margin-top:6px;}
+</style>
+</head>
+<body>
+<div class="shell">
+<div class="topbar">
+  <div class="logo">TGMAQ <span>/ Correção de Cadastro</span></div>
+  <div class="topbar-mid" id="topStats">
+    <span class="stat"><span class="dot" style="background:var(--text3)"></span>Nenhum arquivo</span>
+  </div>
+  <div class="db-status"><div class="db-dot" id="dbDot"></div><span id="dbLabel">Banco desconectado</span></div>
+  <button class="btn btn-secondary btn-sm" onclick="openConfig()">⚙ Firebase</button>
+</div>
+
+<div class="body">
+<div class="sidebar">
+  <div class="sb-sec">
+    <div class="sb-label">Importar CSV</div>
+    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('csvIn').click()"
+         ondragover="event.preventDefault();this.classList.add('drag')"
+         ondragleave="this.classList.remove('drag')"
+         ondrop="handleDrop(event)">
+      <input type="file" id="csvIn" accept=".csv" onchange="loadCSV(this)">
+      <div id="uploadText">📂 Clique ou arraste o CSV<br><span style="font-size:10px;color:var(--text3)">produtos_XXXX.csv</span></div>
+    </div>
+  </div>
+
+  <div class="sb-sec">
+    <div class="sb-label">Processar — em ordem</div>
+    <div class="stack">
+      <button class="btn btn-primary btn-full" id="btnBanco" onclick="runBanco()" disabled>
+        ⚡ 1. Aplicar banco de EANs
+      </button>
+      <button class="btn btn-secondary btn-full" id="btnWeb" onclick="runWeb()" disabled>
+        🌐 2. Buscar na internet
+      </button>
+      <button class="btn btn-secondary btn-full" id="btnAI" onclick="runAI()" disabled>
+        ✦ 3. Corrigir restantes com IA
+      </button>
+    </div>
+    <div id="progInfo" class="info-text" style="display:none"></div>
+    <div class="prog-wrap" id="progWrap" style="display:none"><div class="prog-bar" id="progBar" style="width:0%"></div></div>
+  </div>
+
+  <div class="sb-sec">
+    <div class="sb-label">Filtros</div>
+    <div class="stack">
+      <select class="filter-select" id="fStatus" onchange="applyFilters()">
+        <option value="all">Todos os produtos</option>
+        <option value="9999" selected>Pendentes (9999)</option>
+        <option value="banco">Resolvidos — Banco</option>
+        <option value="web">Resolvidos — Web</option>
+        <option value="ai">Resolvidos — IA</option>
+        <option value="manual">Editados manualmente</option>
+        <option value="salvo">Aprovados ✓</option>
+      </select>
+      <input type="text" class="filter-input" id="fText" placeholder="Buscar descrição ou EAN..." oninput="applyFilters()">
+    </div>
+  </div>
+
+  <div class="sb-sec" style="margin-top:auto;">
+    <div class="sb-label">Exportar</div>
+    <div class="stack">
+      <button class="btn btn-success btn-full" id="btnExport" onclick="exportCSV()" disabled>↓ Exportar CSV corrigido</button>
+      <button class="btn btn-secondary btn-full" id="btnSave" onclick="saveToBanco()" disabled>☁ Salvar aprovados no banco</button>
+    </div>
+    <div class="info-text">Aprovados são salvos no Firebase e usados automaticamente nos próximos cadastros</div>
+  </div>
+</div>
+
+<div class="content">
+  <div class="toolbar">
+    <input type="text" class="search-box" id="gSearch" placeholder="Buscar EAN, código ou descrição..." oninput="applyFilters()">
+    <div class="toolbar-right">
+      <span id="countLbl" style="color:var(--text3);font-size:12px"></span>
+      <button class="btn btn-secondary btn-sm" onclick="approveAll()">✓ Aprovar todos visíveis</button>
+    </div>
+  </div>
+  <div class="tbl-wrap">
+    <div class="empty" id="emptyEl">
+      <div style="font-size:36px;opacity:.3">📋</div>
+      <div style="font-size:13px;font-weight:500;color:var(--text2)">Importe o arquivo de produtos</div>
+      <div style="font-size:11px">Arraste o CSV ou clique em Importar</div>
+    </div>
+    <table id="prodTbl" style="display:none">
+      <thead><tr>
+        <th style="width:28px"><input type="checkbox" id="chkAll" onchange="toggleAll(this.checked)"></th>
+        <th>EAN</th><th>ID</th><th>Descrição</th><th>Subgrupo</th><th>Grupo / Depto</th><th>Fonte</th><th>Ações</th>
+      </tr></thead>
+      <tbody id="prodBody"></tbody>
+    </table>
+  </div>
+  <div class="pagbar" id="pagbar" style="display:none">
+    <button class="pg-btn" id="pgPrev" onclick="chgPage(-1)">← Anterior</button>
+    <span id="pgInfo"></span>
+    <button class="pg-btn" id="pgNext" onclick="chgPage(1)">Próximo →</button>
+    <span style="margin-left:auto;color:var(--text3)">Por página:
+      <select class="filter-select" style="width:62px;display:inline-block" onchange="pgSz=+this.value;pg=0;render()">
+        <option value="50">50</option><option value="100" selected>100</option><option value="200">200</option>
+      </select>
+    </span>
+  </div>
+</div>
+</div>
+</div>
+
+<!-- FIREBASE MODAL -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h2>⚙ Configurar Firebase</h2>
+    <p>Cole as credenciais do projeto Firebase. Ficam salvas no browser e permitem acesso ao banco compartilhado de EANs.</p>
+    <label>API Key</label><input id="fb_key" placeholder="AIzaSy...">
+    <label>Database URL</label><input id="fb_url" placeholder="https://xxx-default-rtdb.firebaseio.com">
+    <label>Project ID</label><input id="fb_pid" placeholder="nome-do-projeto">
+    <label>App ID</label><input id="fb_aid" placeholder="1:xxx:web:xxx">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="document.getElementById('modalBg').classList.remove('show')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveConfig()">Conectar</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="spinner"></div>
+  <div class="ov-text" id="ovTxt">Processando...</div>
+  <div class="ov-prog" id="ovPrg"></div>
+</div>
+<div class="toast-el" id="toastEl"></div>
+
+<script>
+// Hierarquia carregada de hierarquia.js
+// ===== STATE =====
+let prods=[], filtered=[], pg=0, pgSz=100, selected=new Set();
+let db=null, colSep=';', origHeaders=[];
+
+// ===== FIREBASE =====
+function openConfig(){
+  const s=JSON.parse(localStorage.getItem('fbCfg')||'{}');
+  document.getElementById('fb_key').value=s.k||'';
+  document.getElementById('fb_url').value=s.u||'';
+  document.getElementById('fb_pid').value=s.p||'';
+  document.getElementById('fb_aid').value=s.a||'';
+  document.getElementById('modalBg').classList.add('show');
+}
+function saveConfig(){
+  const cfg={k:document.getElementById('fb_key').value.trim(),u:document.getElementById('fb_url').value.trim(),p:document.getElementById('fb_pid').value.trim(),a:document.getElementById('fb_aid').value.trim()};
+  localStorage.setItem('fbCfg',JSON.stringify(cfg));
+  document.getElementById('modalBg').classList.remove('show');
+  initFB(cfg);
+}
+function initFB(cfg){
+  cfg=cfg||JSON.parse(localStorage.getItem('fbCfg')||'{}');
+  if(!cfg.k||!cfg.u){setDB(false,'Banco desconectado');return;}
+  try{
+    let app;
+    try{app=firebase.app();}catch(e){app=firebase.initializeApp({apiKey:cfg.k,databaseURL:cfg.u,projectId:cfg.p,appId:cfg.a});}
+    db=firebase.database(app);
+    db.ref('.info/connected').on('value',s=>{
+      const ok=s.val();
+      setDB(ok,ok?'Banco conectado':'Banco offline');
+      if(ok) document.getElementById('btnSave').disabled=false;
+    });
+    toast('Firebase conectado!','ok');
+  }catch(e){setDB(false,'Erro: '+e.message);toast('Erro Firebase: '+e.message,'err');}
+}
+function setDB(ok,lbl){
+  document.getElementById('dbDot').className='db-dot'+(ok?' ok':' err');
+  document.getElementById('dbLabel').textContent=lbl;
+}
+
+// ===== CSV =====
+function handleDrop(e){e.preventDefault();document.getElementById('uploadZone').classList.remove('drag');if(e.dataTransfer.files[0])processFile(e.dataTransfer.files[0]);}
+function loadCSV(i){if(i.files[0])processFile(i.files[0]);}
+function processFile(file){
+  const r=new FileReader();
+  r.onload=e=>{
+    try{
+      let txt;
+      try{txt=new TextDecoder('utf-8',{fatal:true}).decode(e.target.result);}
+      catch(_){txt=new TextDecoder('windows-1252').decode(e.target.result);}
+      txt=txt.replace(/^\uFEFF/,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+      const lines=txt.trim().split('\n');
+      colSep=lines[0].includes(';')?';':',';
+      origHeaders=lines[0].split(colSep).map(h=>h.replace(/[\r\n\t"]/g,'').trim());
+      const req=['ean','id','descricao','idNivel1'];
+      const miss=req.filter(r=>!origHeaders.includes(r));
+      if(miss.length){toast('Colunas ausentes: '+miss.join(', '),'err');return;}
+      prods=lines.slice(1).filter(l=>l.trim()).map((line,idx)=>{
+        const vals=splitL(line.replace(/\r/g,''),colSep);
+        const o={_idx:idx,_st:'orig',_src:null};
+        origHeaders.forEach((h,i)=>{o[h]=(vals[i]||'').replace(/^"|"$/g,'').trim();});
+        o._od=o.descricao; o._on=o.idNivel1;
+        return o;
+      });
+      document.getElementById('uploadZone').classList.add('done');
+      document.getElementById('uploadText').innerHTML=`✓ ${file.name}<br><span style="font-size:10px">${prods.length.toLocaleString('pt-BR')} produtos</span>`;
+      document.getElementById('prodTbl').style.display='';
+      document.getElementById('emptyEl').style.display='none';
+      document.getElementById('pagbar').style.display='';
+      ['btnBanco','btnWeb','btnAI','btnExport'].forEach(id=>document.getElementById(id).disabled=false);
+      applyFilters(); updateStats();
+      toast(`${prods.length.toLocaleString('pt-BR')} produtos importados`,'ok');
+    }catch(err){toast('Erro: '+err.message,'err');console.error(err);}
+  };
+  r.readAsArrayBuffer(file);
+}
+function splitL(line,sep){
+  const r=[];let c='';let q=false;
+  for(const ch of line){if(ch==='"')q=!q;else if(ch===sep&&!q){r.push(c);c='';}else c+=ch;}
+  r.push(c);return r;
+}
+
+// ===== BANCO (Firebase) =====
+async function runBanco(){
+  const pend=prods.filter(p=>p.idNivel1==='9999');
+  if(!pend.length){toast('Nenhum produto pendente','info');return;}
+  if(!db){toast('Configure o Firebase primeiro','err');return;}
+  showOv('Consultando banco de EANs...','');
+  let found=0;
+  const bsz=50;
+  for(let i=0;i<pend.length;i+=bsz){
+    const batch=pend.slice(i,i+bsz);
+    await Promise.all(batch.map(async p=>{
+      const ean=fixEAN(p.ean);
+      try{
+        const snap=await db.ref('banco_ean/'+ean).get();
+        if(snap.exists()){
+          const d=snap.val();
+          p.descricao=d.descricao;
+          p.idNivel1=String(d.idNivel1);
+          p._st='banco';p._src='Banco';found++;
+        }
+      }catch(e){}
+    }));
+    updOv(`Banco: ${i+batch.length}/${pend.length}`,Math.round((i+batch.length)/pend.length*100));
+  }
+  hideOv();applyFilters();updateStats();
+  toast(`Banco: ${found} produtos resolvidos`,found?'ok':'info');
+}
+
+// ===== WEB SEARCH =====
+async function runWeb(){
+  const pend=prods.filter(p=>p.idNivel1==='9999');
+  if(!pend.length){toast('Nenhum produto pendente','info');return;}
+  showOv('Buscando EANs na internet...','Isso pode demorar alguns minutos');
+  let found=0;
+  for(let i=0;i<pend.length;i++){
+    const p=pend[i];
+    const ean=fixEAN(p.ean);
+    if(ean.length<8||!/^\d+$/.test(ean))continue;
+    try{
+      const res=await fetch(`https://world.openfoodfacts.org/api/v0/product/${ean}.json`);
+      const data=await res.json();
+      if(data.status===1&&data.product){
+        const pr=data.product;
+        const name=pr.product_name_pt||pr.product_name||'';
+        const brand=pr.brands||'';
+        if(name){
+          p.descricao=fmtDesc(name,brand);
+          p._st='web';p._src='Open Food Facts';found++;
+        }
+      }
+    }catch(e){}
+    if(i%10===0){updOv(`Web: ${i}/${pend.length}`,Math.round(i/pend.length*100));await sleep(80);}
+  }
+  hideOv();applyFilters();updateStats();
+  toast(`Web: ${found} produtos encontrados`,found?'ok':'info');
+}
+function fmtDesc(name,brand){
+  let d=(name+(brand?' '+brand:'')).toUpperCase().trim();
+  d=d.replace(/[^A-Z0-9 ÀÁÂÃÄÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜ\/\-\.]/g,'');
+  return d.substring(0,60).trim();
+}
+
+// ===== AI =====
+async function runAI(){
+  const pend=prods.filter(p=>p.idNivel1==='9999');
+  if(!pend.length){toast('Nenhum produto pendente','info');return;}
+  const hierStr=Object.entries(HIERARCHY_DATA).filter(([id])=>id!=='9999').map(([id,v])=>`${id}|${v.subgrupo}|${v.grupo}|${v.depto}`).join('\n');
+  showOv('Corrigindo com IA...',`0 / ${pend.length}`);
+  let done=0;
+  const bsz=15;
+  for(let i=0;i<pend.length;i+=bsz){
+    const batch=pend.slice(i,i+bsz);
+    const prompt=`Especialista em cadastro de produtos para supermercado no Brasil.
+Corrija a descrição (MAIÚSCULAS, padrão: PRODUTO MARCA GRAMATURA UNIDADE) e defina o idNivel1 correto.
+
+HIERARQUIA (id|subgrupo|grupo|departamento):
+${hierStr}
+
+PRODUTOS:
+${batch.map(p=>`ID:${p.id}|EAN:${p.ean}|DESC:${p.descricao}`).join('\n')}
+
+Responda SOMENTE JSON válido sem markdown:
+[{"id":"<id>","descricao":"<desc>","idNivel1":<id>}]`;
+    try{
+      const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,messages:[{role:'user',content:prompt}]})});
+      const data=await res.json();
+      if(data.error)throw new Error(data.error.message);
+      const txt=data.content.map(c=>c.text||'').join('');
+      const parsed=JSON.parse(txt.replace(/```json|```/g,'').trim());
+      parsed.forEach(s=>{
+        const p=prods.find(x=>x.id==s.id);
+        if(p){p.descricao=String(s.descricao).toUpperCase().trim();p.idNivel1=String(s.idNivel1);p._st='ai';p._src='IA';done++;}
+      });
+    }catch(e){console.error('AI error:',e);}
+    updOv(`IA: ${i+batch.length}/${pend.length}`,Math.round((i+batch.length)/pend.length*100));
+  }
+  hideOv();applyFilters();updateStats();
+  toast(`IA: ${done} produtos corrigidos`,done?'ok':'info');
+}
+
+// ===== SAVE TO BANCO =====
+async function saveToBanco(){
+  if(!db){toast('Firebase não conectado','err');return;}
+  const ap=prods.filter(p=>p._st==='salvo'&&p.idNivel1!=='9999');
+  if(!ap.length){toast('Aprove produtos antes de salvar','info');return;}
+  showOv('Salvando no banco...',`0 / ${ap.length}`);
+  const updates={};
+  ap.forEach(p=>{
+    const ean=fixEAN(p.ean);
+    if(ean.length>=7){
+      updates[`banco_ean/${ean}`]={descricao:p.descricao,idNivel1:p.idNivel1,fonte:p._src||'manual',atualizado:new Date().toISOString().slice(0,10)};
+    }
+  });
+  try{
+    await db.ref().update(updates);
+    hideOv();toast(`${ap.length} produtos salvos no banco!`,'ok');
+  }catch(e){hideOv();toast('Erro: '+e.message,'err');}
+}
+
+// ===== TABLE =====
+function applyFilters(){
+  const st=document.getElementById('fStatus').value;
+  const tx=(document.getElementById('fText').value+document.getElementById('gSearch').value).toLowerCase().trim();
+  filtered=prods.filter(p=>{
+    const mt=!tx||p.descricao.toLowerCase().includes(tx)||p.ean.includes(tx)||p.id.includes(tx);
+    let ms=true;
+    if(st==='9999')ms=p.idNivel1==='9999';
+    else if(st==='banco')ms=p._st==='banco';
+    else if(st==='web')ms=p._st==='web';
+    else if(st==='ai')ms=p._st==='ai';
+    else if(st==='manual')ms=p._st==='manual';
+    else if(st==='salvo')ms=p._st==='salvo';
+    return mt&&ms;
+  });
+  pg=0;render();updateStats();
+}
+
+function render(){
+  const tbody=document.getElementById('prodBody');
+  const start=pg*pgSz,end=Math.min(start+pgSz,filtered.length);
+  const slice=filtered.slice(start,end);
+  tbody.innerHTML=slice.map(p=>{
+    const nv=parseInt(p.idNivel1);
+    const h=HIERARCHY_DATA[nv]||null;
+    const is9=p.idNivel1==='9999';
+    const chD=p.descricao!==p._od;
+    const chN=p.idNivel1!==p._on;
+    const badge=is9?`<span class="badge badge-pend">⚠ Pendente</span>`
+      :p._st==='salvo'?`<span class="badge badge-salvo">✓ Aprovado</span>`
+      :p._st==='banco'?`<span class="badge badge-banco">⚡ Banco</span>`
+      :p._st==='web'?`<span class="badge badge-web">🌐 Web</span>`
+      :p._st==='ai'?`<span class="badge badge-ai">✦ IA</span>`
+      :p._st==='manual'?`<span class="badge badge-manual">✎ Manual</span>`
+      :`<span class="badge badge-ok">OK</span>`;
+    const descCell=chD?`<span class="desc-orig">${esc(p._od)}</span><input class="cell-in" value="${esc(p.descricao)}" onchange="updDesc('${p.id}',this.value)">`
+      :`<input class="cell-in" value="${esc(p.descricao)}" onchange="updDesc('${p.id}',this.value)">`;
+    const grpCell=h?`<span class="grp-tag">${h.depto} › ${h.grupo}</span>`:`<span style="color:var(--red);font-size:10px">—</span>`;
+    return `<tr id="row-${p.id}">
+      <td><input type="checkbox" class="rc" data-id="${p.id}" ${selected.has(p.id)?'checked':''} onchange="togSel('${p.id}',this.checked)"></td>
+      <td style="font-family:monospace;font-size:10px;color:var(--text3)">${esc(p.ean)}</td>
+      <td style="font-family:monospace;font-size:10px;color:var(--text3)">${p.id}</td>
+      <td style="min-width:170px">${descCell}</td>
+      <td><select class="sub-sel ${chN?'ch':''}" onchange="updN1('${p.id}',this.value)">
+        ${NIVEL1_LIST.map(o=>`<option value="${o.id}" ${o.id==nv?'selected':''}>${o.id} — ${HIERARCHY_DATA[o.id]?.subgrupo||'?'}</option>`).join('')}
+      </select></td>
+      <td style="min-width:120px">${grpCell}</td>
+      <td>${badge}</td>
+      <td><div class="act-cell">
+        <button class="btn btn-success btn-sm" onclick="approve('${p.id}')" title="Aprovar">✓</button>
+        <button class="btn btn-danger btn-sm" onclick="revert('${p.id}')" title="Reverter">↩</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  const tot=filtered.length,pgs=Math.ceil(tot/pgSz);
+  document.getElementById('pgInfo').textContent=`Pág ${pg+1}/${pgs} (${tot.toLocaleString('pt-BR')} registros)`;
+  document.getElementById('pgPrev').disabled=pg===0;
+  document.getElementById('pgNext').disabled=pg>=pgs-1;
+  document.getElementById('countLbl').textContent=`${tot.toLocaleString('pt-BR')} produtos`;
+}
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function chgPage(d){pg+=d;render();}
+
+// ===== ACTIONS =====
+function updDesc(id,val){
+  const p=prods.find(x=>x.id==id);if(!p)return;
+  p.descricao=val.toUpperCase().trim();
+  if(p._st==='orig')p._st='manual';
+}
+function updN1(id,val){
+  const p=prods.find(x=>x.id==id);if(!p)return;
+  p.idNivel1=val;
+  if(p._st==='orig')p._st='manual';
+  const h=HIERARCHY_DATA[val];
+  const row=document.getElementById('row-'+id);
+  if(row&&h)row.cells[5].innerHTML=`<span class="grp-tag">${h.depto} › ${h.grupo}</span>`;
+  updateStats();
+}
+function approve(id){const p=prods.find(x=>x.id==id);if(p){p._st='salvo';render();updateStats();}}
+function revert(id){const p=prods.find(x=>x.id==id);if(!p)return;p.descricao=p._od;p.idNivel1=p._on;p._st='orig';p._src=null;render();updateStats();}
+function approveAll(){filtered.forEach(p=>{if(p.idNivel1!=='9999')p._st='salvo';});render();updateStats();}
+function togSel(id,c){if(c)selected.add(id);else selected.delete(id);}
+function toggleAll(c){const s=pg*pgSz;filtered.slice(s,s+pgSz).forEach(p=>{if(c)selected.add(p.id);else selected.delete(p.id);});document.querySelectorAll('.rc').forEach(x=>x.checked=c);}
+
+// ===== EXPORT =====
+function exportCSV(){
+  const h=origHeaders;
+  const rows=[h.join(colSep)];
+  prods.forEach(p=>{
+    rows.push(h.map(k=>{const v=String(p[k]||'');return v.includes(colSep)||v.includes('"')?`"${v.replace(/"/g,'""')}"`:v;}).join(colSep));
+  });
+  const blob=new Blob(['\uFEFF'+rows.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='produtos_corrigido.csv';a.click();
+  toast('CSV exportado!','ok');
+}
+
+// ===== STATS =====
+function updateStats(){
+  const t=prods.length,pend=prods.filter(p=>p.idNivel1==='9999').length;
+  const banco=prods.filter(p=>p._st==='banco').length;
+  const web=prods.filter(p=>p._st==='web').length;
+  const ai=prods.filter(p=>p._st==='ai').length;
+  const sal=prods.filter(p=>p._st==='salvo').length;
+  document.getElementById('topStats').innerHTML=`
+    <span class="stat"><span class="dot" style="background:var(--text3)"></span>${t.toLocaleString('pt-BR')} produtos</span>
+    <span class="stat"><span class="dot" style="background:var(--red)"></span>${pend.toLocaleString('pt-BR')} pendentes</span>
+    <span class="stat"><span class="dot" style="background:var(--teal)"></span>${banco} banco · ${web} web · ${ai} IA</span>
+    <span class="stat"><span class="dot" style="background:var(--green)"></span>${sal} aprovados</span>`;
+}
+
+// ===== HELPERS =====
+function fixEAN(ean){
+  ean=String(ean||'').trim().replace(',','.');
+  try{const n=BigInt(Math.round(parseFloat(ean)));const s=n.toString();return s.length<=13?s.padStart(13,'0'):s;}
+  catch(e){return String(ean).replace(/\D/g,'');}
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+function showOv(txt,prg){document.getElementById('overlay').classList.add('show');document.getElementById('ovTxt').textContent=txt;document.getElementById('ovPrg').textContent=prg;}
+function hideOv(){document.getElementById('overlay').classList.remove('show');}
+function updOv(prg,pct){document.getElementById('ovPrg').textContent=prg;document.getElementById('progBar').style.width=pct+'%';}
+function toast(msg,type=''){const t=document.getElementById('toastEl');t.textContent=msg;t.className='toast-el show '+(type||'');setTimeout(()=>t.classList.remove('show'),3500);}
+
+// ===== INIT =====
+initFB();
+</script>
+</body>
+</html>
