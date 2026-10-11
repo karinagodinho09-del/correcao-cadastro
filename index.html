@@ -709,7 +709,7 @@ function encurtarDesc(d){
   if(r.length<=35) return {desc:r, cortou:false};
   // Tira palavras do fim (menos a 1a e as de gramatura) ate caber
   for(let i=w.length-1; i>0 && w.join(' ').length>35; i--){
-    if(!/\d/.test(w[i])) w.splice(i,1);
+    if(!/\d/.test(w[i]) && w[i]!=='KG' && w[i]!=='UN') w.splice(i,1);
   }
   r=w.join(' ');
   if(r.length>35){ r=r.substring(0,36); r=r.substring(0,r.lastIndexOf(' ')>0?r.lastIndexOf(' '):35).trim(); }
@@ -744,7 +744,12 @@ function conferirIA(orig, ean, descIA, subIA){
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
     revisar.push('prefixo '+pref+' nao combina com '+HIERARCHY_DATA[sub].depto);
-  // 3. Tamanho: abrevia em vez de cortar no meio
+  // 3. Pesavel (codigo interno): KG/UN da original sempre no fim
+  if(isInternalEAN(ean)){
+    const un=o.split(' ').find(t=>t==='KG'||t==='UN');
+    if(un) desc=desc.split(' ').filter(t=>t!==un).concat(un).join(' ');
+  }
+  // 3b. Tamanho: abrevia em vez de cortar no meio
   const enc=encurtarDesc(desc);
   desc=enc.desc;
   if(enc.cortou) revisar.push('descricao encurtada para caber em 35');
@@ -784,7 +789,9 @@ async function runAI(){
     const prompt=`Você é especialista em cadastro de produtos para supermercado no Brasil.${depHint}
 
 TAREFA: Para cada produto abaixo, defina:
-1. Descrição corrigida: MAIÚSCULAS, máx 35 chars, ordem: PRODUTO MARCA GRAMATURA SABOR/COMPLEMENTO
+1. Descrição corrigida: MAIÚSCULAS, máx 35 chars, na ordem:
+   - INDUSTRIALIZADO (EAN comeca com 7 ou 0): PRODUTO MARCA GRAMATURA SABOR/DIFERENCIAIS (cor, fragrancia, tipo etc.)
+   - PESAVEL/CODIGO INTERNO: [PREFIXO] PRODUTO MARCA COMPLEMENTO KG ou UN. A unidade KG/UN fica SEMPRE por ultimo e nunca e removida.
 2. idNivel1: escolha o subgrupo cujo NOME melhor descreve o produto
 
 REGRAS DA DESCRICAO (siga todas, sem excecao):
@@ -823,6 +830,8 @@ EXEMPLOS:
 "COXINHA FRANGO UN" (EAN interno) -> "PANIF COXINHA FRANGO UN" | subgrupo=SALGADOS FRITOS(4007)
 "FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG" | subgrupo=CORTES DE FRANGO(2012)
 "LOMBO SUINO TEMPERADO KG" (EAN interno) -> "ACOU SUI LOMBO SUINO TEMPERADO KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
+"LOMBO SADIA TEMPERADO CONG KG" (EAN interno) -> "ACOU SUI LOMBO SADIA TEMP CONG KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
+"KG QUEIJO MUSSARELA TIROLEZ" (EAN interno) -> "QUEIJO MUSSARELA TIROLEZ KG" (KG vai para o fim)
 "ALCATRA KG" (EAN interno) -> "ACOU BOV ALCATRA KG" | subgrupo=CORTES BOVINOS SEM OSSO(2001)
 "LINGUICA TOSCANA KG" (EAN interno) -> "ACOU LINGUICA TOSCANA KG" | subgrupo=LINGUICA TOSCANA(2021)
 "ACUCAR CRISTAL 1KG" (EAN 7896...) -> "ACUCAR CRISTAL 1KG" | subgrupo=ACUCAR CRISTAL(1010)
