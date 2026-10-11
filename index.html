@@ -287,6 +287,7 @@ th{padding:5px 8px !important;}
         <option value="banco">Resolvidos — Banco</option>
         <option value="web">Resolvidos — Web</option>
         <option value="ai">Resolvidos — IA</option>
+        <option value="rev">IA — revisar</option>
         <option value="manual">Editados manualmente</option>
         <option value="salvo">Aprovados ✓</option>
       </select>
@@ -674,68 +675,97 @@ async function runWeb(){
   toast(`Web: ${found} produtos encontrados`,found?'ok':'info');
 }
 
-function fmtDesc(name,brand,qty){
-  // Clean and format description
-  let parts=[name,brand,qty].filter(Boolean);
-  let d=parts.join(' ').toUpperCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove accents
-    .replace(/[^A-Z0-9 \/\-\.]/g,'')
-    .replace(/\s+/g,' ').trim();
-  return d.substring(0,35).trim();
-}
 function fmtDesc(name,brand){
   let d=(name+(brand?' '+brand:'')).toUpperCase().trim();
   d=d.replace(/[^A-Z0-9 ÀÁÂÃÄÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜ\/\-\.]/g,'');
   return d.substring(0,60).trim();
 }
 
+// ===== IA: REGRAS FIXAS E CONFERENCIA =====
+// A IA sugere; estas funcoes conferem. O que nao passar fica como "Revisar IA".
+function normTxt(s){
+  return String(s||'').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+}
+// Padroniza unidade para comparar "200GR" com "200G", "2LT" com "2L"
+function normUnid(t){
+  return t.replace(/^(\d+(?:[.,]\d+)?)\s*(GRAMAS|GRS|GR)$/,'$1G')
+          .replace(/^(\d+(?:[.,]\d+)?)\s*(LITROS|LTS|LT)$/,'$1L')
+          .replace(/^(\d+(?:[.,]\d+)?)\s*MLS$/,'$1ML');
+}
+const PREFIXOS_SETOR = ['FLV','PANIF','ACOU','BOV','AVE','SUI','PEI'];
+const ABREV = [['TEMPERADO','TEMP'],['TEMPERADA','TEMP'],['CONGELADO','CONG'],['CONGELADA','CONG'],
+  ['TRADICIONAL','TRAD'],['ORIGINAL','ORIG'],['INTEGRAL','INT'],['CHOCOLATE','CHOC'],['DESNATADO','DESN'],
+  ['REFRIGERANTE','REFRIG'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
+  ['BISCOITO','BISC'],['LIQUIDO','LIQ'],['SEM','S/'],['COM','C/']];
+// Encurta ate 35 chars abreviando palavras inteiras; so corta se nao houver outro jeito
+function encurtarDesc(d){
+  if(d.length<=35) return {desc:d, cortou:false};
+  let w=d.split(' ');
+  for(const [de,para] of ABREV){
+    if(w.join(' ').length<=35) break;
+    w=w.map(x=>x===de?para:x);
+  }
+  let r=w.join(' ');
+  if(r.length<=35) return {desc:r, cortou:false};
+  // Tira palavras do fim (menos a 1a e as de gramatura) ate caber
+  for(let i=w.length-1; i>0 && w.join(' ').length>35; i--){
+    if(!/\d/.test(w[i])) w.splice(i,1);
+  }
+  r=w.join(' ');
+  if(r.length>35){ r=r.substring(0,36); r=r.substring(0,r.lastIndexOf(' ')>0?r.lastIndexOf(' '):35).trim(); }
+  return {desc:r, cortou:true};
+}
+// Subgrupo de salgado pela descricao original (a IA confundia salgado com pao)
+const RE_SALGADO = /\b(QUIBE|KIBE|ESFIRRA|ESFIHA|ESFIRA|EMPADA|EMPADINHA|ENROLADO|ENROLADINHO|FOGAZZA|CALZONE|COXINHA|RISOLE|RISOLES|CROQUETE|BOLINHA DE QUEIJO)\b/;
+function subgrupoSalgado(orig, ean){
+  if(!RE_SALGADO.test(orig)) return null;
+  if(/\bCONG/.test(orig) || !isInternalEAN(ean)) return '5036';   // industrializado/congelado
+  if(/\bFRIT/.test(orig)) return '4007';
+  if(/\bASSAD/.test(orig)) return '4006';
+  return /\b(COXINHA|RISOLE|RISOLES|CROQUETE|BOLINHA DE QUEIJO)\b/.test(orig) ? '4007' : '4006';
+}
+// Corte comum -> corte temperado quando a descricao diz TEMPERADO
+const SUB_TEMPERADO = {'2000':'2003','2001':'2003','2006':'2007','2012':'2013'};
+// Prefixo de setor precisa bater com o departamento do subgrupo
+const PREFIXO_DEPTO = {'FLV':'3','PANIF':'4','ACOU':'2'};
+
+// Confere a sugestao da IA. Retorna {desc, sub, revisar:[motivos]}
+function conferirIA(orig, ean, descIA, subIA){
+  const o=normTxt(orig).replace(/^\*\s*/,'');
+  let desc=normTxt(descIA).replace(/^\*\s*/,'');
+  let sub=String(subIA||'').trim();
+  const revisar=[];
+  // 1. Subgrupo: regras fixas valem mais que a IA
+  const sSalg=subgrupoSalgado(o, ean);
+  if(sSalg && sub!==sSalg && !(sSalg!=='5036' && (sub==='4006'||sub==='4007'))) sub=sSalg;
+  if(/\bTEMPERAD/.test(o) && SUB_TEMPERADO[sub]) sub=SUB_TEMPERADO[sub];
+  if(!HIERARCHY_DATA[sub]) return {desc, sub:'9999', revisar:['subgrupo inexistente ('+subIA+')']};
+  // 2. Prefixo x departamento
+  const pref=desc.split(' ')[0];
+  if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
+    revisar.push('prefixo '+pref+' nao combina com '+HIERARCHY_DATA[sub].depto);
+  // 3. Tamanho: abrevia em vez de cortar no meio
+  const enc=encurtarDesc(desc);
+  desc=enc.desc;
+  if(enc.cortou) revisar.push('descricao encurtada para caber em 35');
+  // 4. Palavras: nada inventado, gramatura nao pode sumir
+  const tokO=o.split(' ').map(normUnid);
+  const setO=new Set(tokO);
+  const tokD=desc.split(' ').map(normUnid);
+  const abrevOK=new Set(ABREV.map(a=>a[1]));
+  const novas=tokD.filter(t=>t && !setO.has(t) && !PREFIXOS_SETOR.includes(t) && !abrevOK.has(t)
+    && !tokO.some(x=>x.length>t.length && t.length>=3 && x.startsWith(t)));
+  if(novas.length) revisar.push('palavra nova: '+novas.join(', '));
+  const setD=new Set(tokD);
+  const perdidas=tokO.filter(t=>/\d/.test(t) && !setD.has(t));
+  if(perdidas.length) revisar.push('sumiu: '+perdidas.join(', '));
+  return {desc, sub, revisar};
+}
+
 // ===== AI =====
 async function runAI(){
   const pend=prods.filter(p=>p.idNivel1==='9999');
   if(!pend.length){toast('Nenhum produto pendente','info');return;}
-  // Send only key subgroups to keep prompt small
-  const KEY_SUBGROUPS = [
-    '1000|ARROZ BRANCO 1KG|ARROZ|MERCEARIA','1007|FEIJAO PRETO|FEIJAO|MERCEARIA',
-    '1010|ACUCAR CRISTAL 1KG|ACUCAR|MERCEARIA','1016|FARINHA DE TRIGO 1KG|FARINACEOS|MERCEARIA',
-    '1041|MACARRAO COM OVOS|MASSAS|MERCEARIA','1047|AZEITE DE OLIVA|OLEOS E AZEITES|MERCEARIA',
-    '1049|OLEO DE SOJA|OLEOS E AZEITES|MERCEARIA','1051|VINAGRES/ACETATO|TEMPEROS|MERCEARIA',
-    '1057|EXTRATO DE TOMATE|MOLHOS|MERCEARIA','1059|MOLHO DE TOMATE PRONTO|MOLHOS|MERCEARIA',
-    '1064|MAIONESE|MOLHOS|MERCEARIA','1082|ATUM LATA|CONSERVAS E ENLATADOS|MERCEARIA',
-    '1091|BISCOITO RECHEADO|BISCOITOS|MERCEARIA','1093|BISCOITO SALGADO|BISCOITOS|MERCEARIA',
-    '1101|CREME DE LEITE|CULINARIA/SOBREMESA|MERCEARIA','1102|LEITE CONDENSADO|CULINARIA/SOBREMESA|MERCEARIA',
-    '1109|CHOCOLATE EM PO|CULINARIA/SOBREMESA|MERCEARIA','1121|CEREAIS MATINAIS E GRANOLA|MATINAIS|MERCEARIA',
-    '1122|ACHOCOLATADO EM PO|MATINAIS|MERCEARIA','1124|CAFES|MATINAIS|MERCEARIA',
-    '1127|CHA|MATINAIS|MERCEARIA','1128|ERVA MATE/TERERE|MATINAIS|MERCEARIA',
-    '1130|LEITE INTEGRAL TP|LEITES|MERCEARIA','1154|CHOCOLATE BARRA|CHOCOLATES E DOCES|MERCEARIA',
-    '1160|BALAS|CHOCOLATES E DOCES|MERCEARIA','1166|SALGADINHOS CHIPS|SALGADINHOS E SNACKS|MERCEARIA',
-    '2000|CORTES BOVINOS COM OSSO|CARNES BOVINAS|ACOUGUE','2001|CORTES BOVINOS SEM OSSO|CARNES BOVINAS|ACOUGUE',
-    '2006|CORTES SUINOS|CARNE SUINA|ACOUGUE','2011|FRANGO INTEIRO|CARNE AVES|ACOUGUE',
-    '2012|CORTES DE FRANGO|CARNE AVES|ACOUGUE','2021|LINGUICA TOSCANA|LINGUICAS E DEFUMADOS|ACOUGUE',
-    '3000|FRUTAS FRESCAS|FRUTAS|HORTIFRUTI','3002|LEGUMES DE RAIZ E TURBECULO|LEGUMES|HORTIFRUTI',
-    '3004|VERDURAS FOLHOSAS|VERDURAS|HORTIFRUTI','3008|OVOS BRANCOS|OVOS|HORTIFRUTI',
-    '5000|BEBIDA LACTEA|LATICINIOS E GORDURAS|PERECIVEIS','5001|IOGURTE|LATICINIOS E GORDURAS|PERECIVEIS',
-    '5009|QUEIJO FATIADO|LATICINIOS E GORDURAS|PERECIVEIS','5010|QUEIJO PECA/PEDACO|LATICINIOS E GORDURAS|PERECIVEIS',
-    '5012|MANTEIGA|LATICINIOS E GORDURAS|PERECIVEIS','5013|MARGARINA/CREME VEGETAL|LATICINIOS E GORDURAS|PERECIVEIS',
-    '5015|PRESUNTO|FIAMBRERIA|PERECIVEIS','5016|MORTADELA|FIAMBRERIA|PERECIVEIS',
-    '5018|LINGUICA DEFUMADA|EMBUTIDOS E DEFUMADOS|PERECIVEIS','5020|SALSICHAS A VACUO|EMBUTIDOS E DEFUMADOS|PERECIVEIS',
-    '5026|PIZZA PRONTA CONGELADA|CONGELADOS|PERECIVEIS','5029|HAMBURGUER|CONGELADOS|PERECIVEIS',
-    '5033|SORVETE/ACAI|CONGELADOS|PERECIVEIS','5055|PAO FATIADO IND|PADARIA INDUSTRIALIZADA|PERECIVEIS',
-    '6021|CERVEJA LONGNECK|CERVEJAS|BEBIDAS','6022|CERVEJA LATA|CERVEJAS|BEBIDAS',
-    '6025|AGUA MINERAL|BEBIDAS NAO ALCOOLICA|BEBIDAS','6028|SUCO PRONTO/INTEGRAL|BEBIDAS NAO ALCOOLICA|BEBIDAS',
-    '6030|ENERGETICO|BEBIDAS NAO ALCOOLICA|BEBIDAS','6035|REFRIGERANTE PET|REFRIGERANTES|BEBIDAS',
-    '6036|REFRIGERANTE LATA|REFRIGERANTES|BEBIDAS','6017|VINHO NACIONAL|VINHOS|BEBIDAS',
-    '7000|LAVA ROUPAS EM PO|LAVANDERIA|LIMPEZA','7014|DESINFETANTES|LIMPEZA PESADA|LIMPEZA',
-    '7015|LAVA LOUCAS|LIMPEZA PESADA|LIMPEZA','7021|ALCOOL|LIMPEZA PESADA|LIMPEZA',
-    '7043|SACO PARA LIXO|ACESSORIOS PARA LIMPEZA|LIMPEZA',
-    '8000|SHAMPOO|CAPILARES|PERFUMARIA','8009|SABONETES|HIGIENE PESSOAL|PERFUMARIA',
-    '8010|DESODORANTES/ANTITRANSPIRANTES|HIGIENE PESSOAL|PERFUMARIA',
-    '8012|CREME DENTAL/GEL DENTAL|HIGIENE PESSOAL|PERFUMARIA','8014|PAPEL HIGIENICO|HIGIENE PESSOAL|PERFUMARIA',
-    '8038|FRALDAS DESCARTAVEIS|HIGIENE BEBE|PERFUMARIA',
-    '9000|RACAO PARA CAES|PETSHOP|BAZAR','9001|RACAO PARA GATOS|PETSHOP|BAZAR',
-    '9062|EMBALAGENS PLASTICAS DESCARTAVEIS|DESCARTAVEIS E FESTAS|BAZAR',
-    '9076|PILHAS E BATERIAS|ENCARTELADOS|BAZAR'
-  ];
-  const hierStr = KEY_SUBGROUPS.join('\n');
   miniIAShow(true); miniIAUpd('0 de '+pend.length,0);
   _pararPedido=false;
   let done=0;
@@ -757,13 +787,15 @@ TAREFA: Para cada produto abaixo, defina:
 1. Descrição corrigida: MAIÚSCULAS, máx 35 chars, ordem: PRODUTO MARCA GRAMATURA SABOR/COMPLEMENTO
 2. idNivel1: escolha o subgrupo cujo NOME melhor descreve o produto
 
-REGRAS DA DESCRICAO:
-- NUNCA repita palavras. Se a original repete algo (ex: ALHO TRITURADO ALHO MAIS), cada informacao aparece so uma vez.
-- Separe certo: TIPO + MARCA + GRAMATURA + COMPLEMENTO. A marca e nome proprio (ALHO MAIS, Q BOA, BABY SOFT CARE).
-- So reorganize; nao invente nem troque palavras.
-EX: "ALHO TRITURADO ALHO MAIS 200GR" = "ALHO TRITURADO ALHO MAIS 200G"
-EX: "ALVEJANTE Q BOA S/CLORO OXI 2LT" = "ALVEJANTE Q BOA 2L S/CLORO OXI"
-EX: "AMACIANTE BABY SOFT CARE 1LT" = "AMACIANTE BABY SOFT CARE 1L"
+REGRAS DA DESCRICAO (siga todas, sem excecao):
+- Use SOMENTE palavras que ja estao na descricao original. Nao invente, nao traduza, nao troque por sinonimo.
+- Mudancas permitidas: reordenar; padronizar unidade (GR/GRS->G, LT/LTS->L, MLS->ML); tirar informacao duplicada; adicionar o prefixo de setor (regra abaixo).
+- Abreviar so se passar de 35 chars (ex: TEMPERADO->TEMP, CONGELADO->CONG, SEM->S/, COM->C/).
+- NUNCA remova gramatura, peso, volume ou a marca.
+- A marca e nome proprio e pode repetir palavra do produto (ALHO MAIS, Q BOA, BABY SOFT CARE): isso NAO e repeticao.
+EX: "ALHO TRITURADO ALHO MAIS 200GR" -> "ALHO TRITURADO ALHO MAIS 200G"
+EX: "ALVEJANTE Q BOA S/CLORO OXI 2LT" -> "ALVEJANTE Q BOA 2L S/CLORO OXI"
+EX: "AMACIANTE BABY SOFT CARE 1LT" -> "AMACIANTE BABY SOFT CARE 1L"
 
 REGRA DE PREFIXO (PRODUTOS INTERNOS DE BALANCA/PRODUCAO):
 Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
@@ -776,28 +808,28 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
   Suino (porco, pernil, costela suina, lombo, bisteca) = ACOU SUI
   Peixe (tilapia, salmao, file de peixe) = ACOU PEI
   Linguica e embutidos de acougue = ACOU
-
-EXEMPLOS DE PREFIXO:
-"ALFACE CRESPA UN" (EAN interno) -> "FLV ALFACE CRESPA UN"
-"PAO FRANCES KG" (EAN interno) -> "PANIF PAO FRANCES KG"
-"FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG"
-"ALCATRA KG" (EAN interno) -> "ACOU BOV ALCATRA KG"
-"LINGUICA TOSCANA KG" (EAN interno) -> "ACOU LINGUICA TOSCANA KG"
-"ACUCAR CRISTAL 1KG" (EAN 7896...) -> "ACUCAR CRISTAL 1KG" (sem prefixo)
-"DESOD DOVE 50ML" (EAN 78929241) -> "DESOD DOVE 50ML" (comeca com 7, sem prefixo)
 Nunca repita o prefixo se a descricao ja comecar com ele.
 
+ATENCAO: o prefixo indica so o SETOR. O subgrupo depende do QUE o produto e:
+- PANIF + pao -> 4004/4005/4012 | PANIF + bolo -> 4000/4001 | PANIF + torta doce -> 4002, torta salgada -> 4014
+- PANIF + SALGADO (quibe, esfiha, empada, enroladinho, coxinha, risole) -> 4006 SALGADOS ASSADOS ou 4007 SALGADOS FRITOS. Salgado NUNCA e pao.
+- Carne TEMPERADA -> subgrupo "TEMPERADO" (bovina 2003, suina 2007, frango 2013), nao o corte comum.
+
 EXEMPLOS:
-"PASTILHA MORANGO DOCILE 17G" → "PASTILHA DOCILE 17G MORANGO" | subgrupo=PASTILHAS(1162)
-"DROPS HALLS MENTA 28GR" → "BALA HALLS 28G MENTA" | subgrupo=BALAS(1160)
-"CHICLETE TRIDENT" → "CHICLETE TRIDENT" | subgrupo=CHICLETS(1163)
-"SORVETE KIBON 1,5L" → "SORVETE KIBON 1,5L" | subgrupo=SORVETE/ACAI(5033)
-"VINHO CANCAO TINTO 750ML" → "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
-"IOGURTE ACTIVIA 170G" → "IOG ACTIVIA 170G" | subgrupo=IOGURTE(5001)
-"FRANGO PEITO SEM OSSO" → "ACOU AVE PEITO S/OSSO KG" | subgrupo=CORTES DE FRANGO(2012)
-"GERGELIM VITAO 150G" → "GERGELIM VITAO 150G" | subgrupo=SEMENTES E GRAOS INTEGRAIS(1179)
-"GELO POTAVEL 1KG" → "GELO POTAVEL 1KG" | subgrupo=OUTROS(use o mais próximo)
-"GERADOR FOTOVOLTAICO" → "GERADOR FOTOVOLTAICO" | subgrupo=ELETRODOMESTICOS E ELETRONICOS(9049)
+"ALFACE CRESPA UN" (EAN interno) -> "FLV ALFACE CRESPA UN" | subgrupo=VERDURAS FOLHOSAS(3004)
+"PAO FRANCES KG" (EAN interno) -> "PANIF PAO FRANCES KG" | subgrupo=PAES TRADICIONAIS(4004)
+"QUIBE ASSADO KG" (EAN interno) -> "PANIF QUIBE ASSADO KG" | subgrupo=SALGADOS ASSADOS(4006)
+"COXINHA FRANGO UN" (EAN interno) -> "PANIF COXINHA FRANGO UN" | subgrupo=SALGADOS FRITOS(4007)
+"FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG" | subgrupo=CORTES DE FRANGO(2012)
+"LOMBO SUINO TEMPERADO KG" (EAN interno) -> "ACOU SUI LOMBO SUINO TEMPERADO KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
+"ALCATRA KG" (EAN interno) -> "ACOU BOV ALCATRA KG" | subgrupo=CORTES BOVINOS SEM OSSO(2001)
+"LINGUICA TOSCANA KG" (EAN interno) -> "ACOU LINGUICA TOSCANA KG" | subgrupo=LINGUICA TOSCANA(2021)
+"ACUCAR CRISTAL 1KG" (EAN 7896...) -> "ACUCAR CRISTAL 1KG" | subgrupo=ACUCAR CRISTAL(1010)
+"PASTILHA MORANGO DOCILE 17G" -> "PASTILHA DOCILE 17G MORANGO" | subgrupo=PASTILHAS(1162)
+"DROPS HALLS MENTA 28GR" -> "DROPS HALLS 28G MENTA" | subgrupo=BALAS(1160)
+"VINHO CANCAO TINTO 750ML" -> "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
+"IOGURTE ACTIVIA 170G" -> "IOGURTE ACTIVIA 170G" | subgrupo=IOGURTE(5001)
+"GERADOR FOTOVOLTAICO" -> "GERADOR FOTOVOLTAICO" | subgrupo=ELETRODOMESTICOS E ELETRONICOS(9049)
 
 PENSE ASSIM: leia o nome do produto → identifique o que é → encontre o subgrupo com nome mais parecido.
 
@@ -834,8 +866,9 @@ SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
 2025=LINGUICA ESPECIAL CONDIMENTADA,2026=BACON,2027=CORTES SUINOS SALGADO/DEFUMADOS,2028=SALSICHA GRANEL,
 3000=FRUTAS FRESCAS,3001=FRUTAS EMBALADAS,3002=LEGUMES DE RAIZ E TUBERCULO,3003=LEGUMES OUTROS,
 3004=VERDURAS FOLHOSAS,3005=TEMPEROS FRESCOS,3007=ALHO A GRANEL,3008=OVOS BRANCOS,3009=OVOS VERMELHOS,
-4000=BOLO SIMPLES,4001=BOLO RECHEADO/COM COBERTURA,4002=TORTAS DOCES,4003=DOCES E SOBREMESAS CONF,
-4004=PAES TRADICIONAIS,4005=PAES ESPECIAIS,4006=SALGADOS ASSADOS,4007=SALGADOS FRITOS,
+4000=BOLO SIMPLES,4001=BOLO RECHEADO/COM COBERTURA,4002=TORTAS DOCES,4003=DOCES E SOBREMESAS CONF,4015=FOLHADOS DOCE,4017=BISCOITOS E BOLACHAS FP,
+4004=PAES TRADICIONAIS,4005=PAES ESPECIAIS,4011=BROAS,4012=PAES DOCES E RECHEADOS,4013=SANDUICHES PRONTO,
+4006=SALGADOS ASSADOS,4007=SALGADOS FRITOS,4014=TORTAS SALGADAS,
 5000=BEBIDA LACTEA,5001=IOGURTE,5002=PETIT SUISSE,5003=SOBREMESA LACTEA,5004=LEITE FERMENTADO,
 5005=QUEIJO RALADO,5006=CREME DE LEITE FRESCO/NATA,5007=ACHOCOLATADO PRONTO,5008=REQUEIJAO,
 5009=QUEIJO FATIADO,5010=QUEIJO PECA/PEDACO,5011=QUEIJO ESPECIAL/DEFUMADO,
@@ -921,18 +954,7 @@ Responda SOMENTE JSON válido sem markdown:
         const data=await res.json();
         if(data.error) throw new Error('Groq: '+data.error.message);
         txt=data.choices?.[0]?.message?.content||'';
-        // DIAGNOSTICO (so no 1o lote): mostra o que a API devolveu
-        if(i===0 && !window._diagMostrado){
-          window._diagMostrado=true;
-          const msg = data.choices?.[0]?.message || {};
-          const resumo = 'DIAGNOSTICO DA IA (1o lote):\n\n'+
-            'content (tamanho): '+(txt?txt.length:0)+' chars\n'+
-            'reasoning presente: '+(msg.reasoning?('sim, '+msg.reasoning.length+' chars'):'nao')+'\n'+
-            'finish_reason: '+(data.choices?.[0]?.finish_reason||'?')+'\n\n'+
-            'PRIMEIROS 600 CHARS DO CONTENT:\n'+(txt?txt.slice(0,600):'(vazio!)')+
-            (msg.reasoning?('\n\nPRIMEIROS 300 DO REASONING:\n'+msg.reasoning.slice(0,300)):'');
-          alert(resumo);
-        }
+        if(!txt) console.warn('Groq: resposta vazia', data.choices?.[0]?.finish_reason);
       } else {
         // Fallback to Claude (paid)
         const res=await fetch('https://api.anthropic.com/v1/messages',{
@@ -970,32 +992,19 @@ Responda SOMENTE JSON válido sem markdown:
         if(!p) return;
         // PROTECAO: se voce mexeu neste produto enquanto a IA rodava, nao sobrescreve
         if(p.idNivel1!=='9999' || (p._st && p._st!=='orig')){ return; }
-        const desc = String(s.descricao).toUpperCase().trim().substring(0,35);
-        const nv = String(s.idNivel1);
-        // If IA returned 9999 or empty, mark with *
-        if(!desc || nv==='9999' || nv==='0'){
+        const c = (s.descricao && s.idNivel1) ? conferirIA(p.descricao, p.ean, s.descricao, s.idNivel1) : null;
+        // IA nao respondeu ou mandou subgrupo invalido: marca com * para correcao manual
+        if(!c || !c.desc || c.sub==='9999' || c.sub==='0'){
           if(!p.descricao.startsWith('*')) p.descricao = '* ' + p.descricao;
           p._st='manual';
         } else {
-          p.descricao=desc;
-          p.idNivel1=nv;
+          p.descricao=c.desc;
+          p.idNivel1=c.sub;
           p._st='ai';p._src='IA';done++;
+          p._rev = c.revisar.length ? c.revisar.join(' | ') : null;
         }
       });
-      // Auto-save batch to Firebase if connected
-      if(db && parsed.length){
-        const updates={};
-        parsed.forEach(s=>{
-          const p=prods.find(x=>x.id==s.id);
-          if(!p||p.idNivel1==='9999') return;
-          const ean=fixEAN(p.ean);
-          const isInternal=isInternalEAN(p.ean);
-          if(!isInternal){
-            updates[`banco_ean/${ean}`]={descricao:p.descricao,idNivel1:p.idNivel1,fonte:'ia_auto',atualizado:new Date().toISOString().slice(0,10)};
-          }
-        });
-        if(Object.keys(updates).length) db.ref().update(updates).catch(e=>console.warn('Auto-save err:',e));
-      }
+      // Correcoes da IA NAO vao direto para o banco: so depois de aprovadas (✓) e salvas
     }catch(e){
       console.error('AI error batch '+i+':',e);
       const msg = e.message||'';
@@ -1032,14 +1041,14 @@ Responda SOMENTE JSON válido sem markdown:
       if (inp) inp.value = b.descricao || s.descricao || '';
       // Update subgroup label
       const subLbl = row.querySelector('[id^="subLabel-"]');
-      const nv = s?.idNivel1 || b.idNivel1;
+      const nv = b.idNivel1;
       const h = HIERARCHY_DATA[nv];
       if (subLbl && h) subLbl.value = `${nv} — ${h.subgrupo}`;
       // Update grupo/depto cell
       if (h) row.cells[5].innerHTML = `<span class="grp-tag">${h.depto} › ${h.grupo}</span>`;
       // Update badge
       const badge = row.cells[6];
-      if (badge) badge.innerHTML = '<span class="badge badge-ai">✦ IA</span>';
+      if (badge && b._st==='ai') badge.innerHTML = badgeIA(b);
     });
     // Full re-render every 3 batches
     if (Math.floor(i/30) % 3 === 0) { render(); await sleep(10); }
@@ -1063,7 +1072,7 @@ async function saveToBanco(){
     const corrigidosNaoAprovados = prods.filter(p=>p.idNivel1!=='9999' && p._st!=='salvo' && p._st!=='orig').length;
     if(corrigidosNaoAprovados>0){
       if(confirm('Nenhum produto está APROVADO (✓), mas há '+corrigidosNaoAprovados+' corrigidos sem aprovar.\n\nStatus atual: '+resumo+'\n\nDeseja aprovar e salvar TODOS os corrigidos agora?')){
-        prods.forEach(p=>{ if(p.idNivel1!=='9999' && p._st!=='orig') p._st='salvo'; });
+        prods.forEach(p=>{ if(p.idNivel1!=='9999' && p._st!=='orig' && !p._rev) p._st='salvo'; });
         // segue para salvar
       } else { return; }
     } else {
@@ -1197,6 +1206,7 @@ function applyFilters(){
     else if(st==='banco')ms=p._st==='banco';
     else if(st==='web')ms=p._st==='web';
     else if(st==='ai')ms=p._st==='ai';
+    else if(st==='rev')ms=p._st==='ai'&&!!p._rev;
     else if(st==='manual')ms=p._st==='manual';
     else if(st==='salvo')ms=p._st==='salvo';
     // Department filter
@@ -1226,6 +1236,10 @@ function applyFilters(){
   pg=0;render();updateStats();
 }
 
+function badgeIA(p){
+  return p._rev ? `<span class="badge badge-pend" title="${esc(p._rev)}">⚠ Revisar IA</span>`
+                : `<span class="badge badge-ai">✦ IA</span>`;
+}
 function render(){
   const tbody=document.getElementById('prodBody');
   const start=pg*pgSz,end=Math.min(start+pgSz,filtered.length);
@@ -1240,7 +1254,7 @@ function render(){
       :p._st==='salvo'?`<span class="badge badge-salvo">✓ Aprovado</span>`
       :p._st==='banco'?`<span class="badge badge-banco">⚡ Banco</span>`
       :p._st==='web'?`<span class="badge badge-web">🌐 Web</span>`
-      :p._st==='ai'?`<span class="badge badge-ai">✦ IA</span>`
+      :p._st==='ai'?badgeIA(p)
       :p._st==='manual'?`<span class="badge badge-manual">✎ Manual</span>`
       :`<span class="badge badge-ok">OK</span>`;
     const descCell=`
@@ -1284,21 +1298,28 @@ function chgPage(d){pg+=d;render();}
 function updDesc(id,val){
   const p=prods.find(x=>x.id==id);if(!p)return;
   p.descricao=val.toUpperCase().trim().substring(0,35);
+  p._rev=null;
   // Mark as edited (manual) so it gets re-saved to bank with new description
   if(p._st==='orig'||p._st==='banco'||p._st==='web'||p._st==='ai')p._st='manual';
 }
 function updN1(id,val){
   const p=prods.find(x=>x.id==id);if(!p)return;
   p.idNivel1=val;
+  p._rev=null;
   if(p._st==='orig'||p._st==='banco'||p._st==='web'||p._st==='ai')p._st='manual';
   const h=HIERARCHY_DATA[val];
   const row=document.getElementById('row-'+id);
   if(row&&h)row.cells[5].innerHTML=`<span class="grp-tag">${h.depto} › ${h.grupo}</span>`;
   updateStats();
 }
-function approve(id){const p=prods.find(x=>x.id==id);if(p){p._st='salvo';render();updateStats();}}
-function revert(id){const p=prods.find(x=>x.id==id);if(!p)return;p.descricao=p._od;p.idNivel1=p._on;p._st='orig';p._src=null;render();updateStats();}
-function approveAll(){filtered.forEach(p=>{if(p.idNivel1!=='9999')p._st='salvo';});render();updateStats();}
+function approve(id){const p=prods.find(x=>x.id==id);if(p){p._st='salvo';p._rev=null;render();updateStats();}}
+function revert(id){const p=prods.find(x=>x.id==id);if(!p)return;p._rev=null;p.descricao=p._od;p.idNivel1=p._on;p._st='orig';p._src=null;render();updateStats();}
+function approveAll(){
+  let rev=0;
+  filtered.forEach(p=>{ if(p.idNivel1==='9999') return; if(p._rev){rev++;return;} p._st='salvo'; });
+  render();updateStats();
+  if(rev) toast(rev+' sugestão(ões) da IA marcadas "Revisar" não foram aprovadas — confira uma a uma','info');
+}
 function togSel(id,c){if(c)selected.add(id);else selected.delete(id);atualizarBarraMassa();}
 function toggleAll(c){const s=pg*pgSz;filtered.slice(s,s+pgSz).forEach(p=>{if(c)selected.add(p.id);else selected.delete(p.id);});document.querySelectorAll('.rc').forEach(x=>x.checked=c);atualizarBarraMassa();}
 function atualizarBarraMassa(){
@@ -1310,7 +1331,7 @@ function atualizarBarraMassa(){
 function limparSelecao(){ selected.clear(); document.querySelectorAll('.rc').forEach(x=>x.checked=false); atualizarBarraMassa(); }
 function aprovarSelecionados(){
   let n=0;
-  selected.forEach(id=>{ const p=prods.find(x=>x.id==id); if(p && p.idNivel1!=='9999'){ p._st='salvo'; n++; } });
+  selected.forEach(id=>{ const p=prods.find(x=>x.id==id); if(p && p.idNivel1!=='9999'){ p._st='salvo'; p._rev=null; n++; } });
   render(); updateStats(); salvarProgresso();
   toast(n+' produto(s) aprovado(s)','ok');
 }
