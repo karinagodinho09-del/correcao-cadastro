@@ -843,13 +843,14 @@ TAREFA: Para cada produto abaixo, defina:
 1. Descrição corrigida: MAIÚSCULAS, máx 35 chars, na ordem:
    - INDUSTRIALIZADO (EAN comeca com 7 ou 0): PRODUTO MARCA GRAMATURA SABOR/DIFERENCIAIS (cor, fragrancia, tipo etc.)
    - PESAVEL/CODIGO INTERNO: [PREFIXO] PRODUTO MARCA COMPLEMENTO KG ou UN. A unidade KG/UN fica SEMPRE por ultimo e nunca e removida.
+   - INSUMO DE PRODUCAO (subgrupo 4016): PRODUCAO PRODUTO GRAMATURA DIFERENCIAL, SEM A MARCA (para producao a marca nao importa).
 2. idNivel1: escolha o subgrupo cujo NOME melhor descreve o produto
 
 REGRAS DA DESCRICAO (siga todas, sem excecao):
 - Use SOMENTE palavras que ja estao na descricao original. Nao invente, nao traduza, nao troque por sinonimo.
 - Mudancas permitidas: reordenar; padronizar unidade (GR/GRS->G, LT/LTS->L, MLS->ML); tirar informacao duplicada; adicionar o prefixo de setor (regra abaixo).
 - Abreviar so se passar de 35 chars (ex: TEMPERADO->TEMP, CONGELADO->CONG, SEM->S/, COM->C/).
-- NUNCA remova gramatura, peso, volume ou a marca.
+- NUNCA remova gramatura, peso, volume ou a marca (unica excecao: insumo de producao fica sem marca).
 - A marca e nome proprio e pode repetir palavra do produto (ALHO MAIS, Q BOA, BABY SOFT CARE): isso NAO e repeticao.
 EX: "ALHO TRITURADO ALHO MAIS 200GR" -> "ALHO TRITURADO ALHO MAIS 200G"
 EX: "ALVEJANTE Q BOA S/CLORO OXI 2LT" -> "ALVEJANTE Q BOA 2L S/CLORO OXI"
@@ -861,7 +862,7 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
 - EAN NAO comeca com 7 nem 0 (codigo interno curto) E produto pesavel/producao = ADICIONE o prefixo do setor no inicio da descricao:
   Hortifruti (alface, tomate, banana, maca, cebola, batata, verdura, legume, fruta, ovo granel) = FLV
   Padaria/Producao propria (pao, bolo, salgado, torta, rocambole, cuca, sonho) = PANIF
-  INSUMO para produzir outros produtos (embalagem grande: mistura/pre-mistura 25KG, farinha 25KG/50KG, melhorador, gordura 20KG, recheio/cobertura em balde) = PRODUCAO (nunca PANIF), subgrupo PRODUTOS PARA PRODUCAO(4016). Use so quando estiver claro que e insumo.
+  INSUMO para produzir outros produtos (embalagem grande: mistura/pre-mistura 25KG, farinha 25KG/50KG, melhorador, gordura 20KG, recheio/cobertura em balde) = PRODUCAO (nunca PANIF), SEM a marca, subgrupo PRODUTOS PARA PRODUCAO(4016). Use so quando estiver claro que e insumo.
   Carne bovina (bovino, alcatra, patinho, coxao, acem, musculo, mignon, costela bovina) = ACOU BOV
   Aves (frango, peito, coxa, sobrecoxa, asa, peru) = ACOU AVE
   Suino (porco, pernil, costela suina, lombo, bisteca) = ACOU SUI
@@ -883,7 +884,8 @@ EXEMPLOS:
 "PAO FRANCES KG" (EAN interno) -> "PANIF PAO FRANCES KG" | subgrupo=PAES TRADICIONAIS(4004)
 "QUIBE ASSADO KG" (EAN interno) -> "PANIF QUIBE ASSADO KG" | subgrupo=SALGADOS ASSADOS(4006)
 "PAO DE QUEIJO KG" (EAN interno) -> "PANIF PAO DE QUEIJO KG" | subgrupo=${HIERARCHY_DATA[idPaoQueijo()].subgrupo}(${idPaoQueijo()}) (producao propria, nao e frios)
-"MISTURA WERNERMIX 25KG PRETO" -> "PRODUCAO MIST WERNERMIX 25KG PRETO" | subgrupo=PRODUTOS PARA PRODUCAO(4016)
+"MISTURA WERNERMIX 25KG PRETO" -> "PRODUCAO MISTURA 25KG PRETO" | subgrupo=PRODUTOS PARA PRODUCAO(4016) (sem marca)
+"FARINHA DE TRIGO BUNGE 50KG" -> "PRODUCAO FARINHA DE TRIGO 50KG" | subgrupo=PRODUTOS PARA PRODUCAO(4016) (sem marca)
 "COXINHA FRANGO UN" (EAN interno) -> "PANIF COXINHA FRANGO UN" | subgrupo=SALGADOS FRITOS(4007)
 "FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG" | subgrupo=CORTES DE FRANGO(2012)
 "LOMBO SUINO TEMPERADO KG" (EAN interno) -> "ACOU SUI LOMBO SUINO TEMPERADO KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
