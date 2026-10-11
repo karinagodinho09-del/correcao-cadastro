@@ -809,6 +809,7 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
   Peixe (tilapia, salmao, file de peixe) = ACOU PEI
   Linguica e embutidos de acougue = ACOU
 Nunca repita o prefixo se a descricao ja comecar com ele.
+- Frios, queijos e laticinios (mesmo com codigo interno e vendidos por KG) NAO levam prefixo.
 
 ATENCAO: o prefixo indica so o SETOR. O subgrupo depende do QUE o produto e:
 - PANIF + pao -> 4004/4005/4012 | PANIF + bolo -> 4000/4001 | PANIF + torta doce -> 4002, torta salgada -> 4014
@@ -825,6 +826,7 @@ EXEMPLOS:
 "ALCATRA KG" (EAN interno) -> "ACOU BOV ALCATRA KG" | subgrupo=CORTES BOVINOS SEM OSSO(2001)
 "LINGUICA TOSCANA KG" (EAN interno) -> "ACOU LINGUICA TOSCANA KG" | subgrupo=LINGUICA TOSCANA(2021)
 "ACUCAR CRISTAL 1KG" (EAN 7896...) -> "ACUCAR CRISTAL 1KG" | subgrupo=ACUCAR CRISTAL(1010)
+"QUEIJO PRATO SADIA KG" (EAN interno) -> "QUEIJO PRATO SADIA KG" (frios: sem prefixo, ja esta correta)
 "PASTILHA MORANGO DOCILE 17G" -> "PASTILHA DOCILE 17G MORANGO" | subgrupo=PASTILHAS(1162)
 "DROPS HALLS MENTA 28GR" -> "DROPS HALLS 28G MENTA" | subgrupo=BALAS(1160)
 "VINHO CANCAO TINTO 750ML" -> "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
