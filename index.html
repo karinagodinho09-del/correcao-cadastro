@@ -724,6 +724,21 @@ function subgrupoSalgado(orig, ean){
   if(/\bASSAD/.test(orig)) return '4006';
   return /\b(COXINHA|RISOLE|RISOLES|CROQUETE|BOLINHA DE QUEIJO)\b/.test(orig) ? '4007' : '4006';
 }
+// Queijo: mussarela/prato = fatiado (salvo PECA/PEDACO); demais (ricota, minas...) = peca/pedaco
+function subgrupoQueijo(orig, subIA){
+  const o=tirarPrefixo(orig);
+  if(!/^(QUEIJO|MUSSARELA|MUCARELA|MUZZARELA|MOZARELA|MOZZARELA|RICOTA)\b/.test(o)) return null;
+  if(/\bRALAD/.test(o)) return '5005';
+  if(/\b(PECA|PEDACO|PEDACOS)\b/.test(o)) return '5010';
+  if(/\b(MUSSARELA|MUCARELA|MUZZARELA|MOZARELA|MOZZARELA|PRATO)\b/.test(o)) return '5009';
+  return subIA==='5011' ? '5011' : '5010';   // especial/defumado/processado: mantem se a IA escolheu
+}
+function tirarPrefixo(d){
+  const w=d.split(' ');
+  if(w[0]==='FLV'||w[0]==='PANIF') w.shift();
+  else if(w[0]==='ACOU'){ w.shift(); if(['BOV','AVE','SUI','PEI'].includes(w[0])) w.shift(); }
+  return w.join(' ');
+}
 // Corte comum -> corte temperado quando a descricao diz TEMPERADO
 const SUB_TEMPERADO = {'2000':'2003','2001':'2003','2006':'2007','2012':'2013'};
 // Prefixo de setor precisa bater com o departamento do subgrupo
@@ -739,7 +754,17 @@ function conferirIA(orig, ean, descIA, subIA){
   const sSalg=subgrupoSalgado(o, ean);
   if(sSalg && sub!==sSalg && !(sSalg!=='5036' && (sub==='4006'||sub==='4007'))) sub=sSalg;
   if(/\bTEMPERAD/.test(o) && SUB_TEMPERADO[sub]) sub=SUB_TEMPERADO[sub];
+  const sQueijo=subgrupoQueijo(o, sub);
+  if(sQueijo) sub=sQueijo;
+  if(/\bBACON\b/.test(o)) sub='2026';
   if(!HIERARCHY_DATA[sub]) return {desc, sub:'9999', revisar:['subgrupo inexistente ('+subIA+')']};
+  // Prefixo: frios/laticinios/congelados (5xxx) nunca levam; bacon so a peca por KG
+  if(sub.startsWith('5')) desc=tirarPrefixo(desc);
+  if(sub==='2026'){
+    const pecaKG=/\bKG\b/.test(o) && !o.split(' ').some(t=>/\d/.test(t));
+    desc=tirarPrefixo(desc);
+    if(pecaKG) desc='ACOU '+desc;
+  }
   // 2. Prefixo x departamento
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
@@ -816,12 +841,15 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
   Peixe (tilapia, salmao, file de peixe) = ACOU PEI
   Linguica e embutidos de acougue = ACOU
 Nunca repita o prefixo se a descricao ja comecar com ele.
-- Frios, queijos e laticinios (mesmo com codigo interno e vendidos por KG) NAO levam prefixo.
+- Frios, queijos, presunto, mortadela, salame e laticinios NAO levam prefixo (mesmo com codigo interno e vendidos por KG): nao sao padaria nem acougue.
+- BACON: peca vendida por KG (sem gramatura fixa) leva ACOU na frente. Bacon com gramatura fixa na embalagem (ex: 250G) NAO leva prefixo. Os dois vao para BACON(2026).
 
 ATENCAO: o prefixo indica so o SETOR. O subgrupo depende do QUE o produto e:
 - PANIF + pao -> 4004/4005/4012 | PANIF + bolo -> 4000/4001 | PANIF + torta doce -> 4002, torta salgada -> 4014
 - PANIF + SALGADO (quibe, esfiha, empada, enroladinho, coxinha, risole) -> 4006 SALGADOS ASSADOS ou 4007 SALGADOS FRITOS. Salgado NUNCA e pao.
 - Carne TEMPERADA -> subgrupo "TEMPERADO" (bovina 2003, suina 2007, frango 2013), nao o corte comum.
+- QUEIJO: mussarela e prato -> QUEIJO FATIADO(5009), a nao ser que a descricao diga PECA ou PEDACO -> 5010.
+  Ricota, minas, frescal, coalho, parmesao em peca e outros -> QUEIJO PECA/PEDACO(5010). Ralado -> 5005.
 
 EXEMPLOS:
 "ALFACE CRESPA UN" (EAN interno) -> "FLV ALFACE CRESPA UN" | subgrupo=VERDURAS FOLHOSAS(3004)
@@ -835,7 +863,11 @@ EXEMPLOS:
 "ALCATRA KG" (EAN interno) -> "ACOU BOV ALCATRA KG" | subgrupo=CORTES BOVINOS SEM OSSO(2001)
 "LINGUICA TOSCANA KG" (EAN interno) -> "ACOU LINGUICA TOSCANA KG" | subgrupo=LINGUICA TOSCANA(2021)
 "ACUCAR CRISTAL 1KG" (EAN 7896...) -> "ACUCAR CRISTAL 1KG" | subgrupo=ACUCAR CRISTAL(1010)
-"QUEIJO PRATO SADIA KG" (EAN interno) -> "QUEIJO PRATO SADIA KG" (frios: sem prefixo, ja esta correta)
+"QUEIJO PRATO SADIA KG" (EAN interno) -> "QUEIJO PRATO SADIA KG" | subgrupo=QUEIJO FATIADO(5009)
+"QUEIJO MINAS FRESCAL KG" (EAN interno) -> "QUEIJO MINAS FRESCAL KG" | subgrupo=QUEIJO PECA/PEDACO(5010)
+"PRESUNTO SADIA KG" (EAN interno) -> "PRESUNTO SADIA KG" | subgrupo=PRESUNTO(5015)
+"BACON PECA SEARA KG" (EAN interno) -> "ACOU BACON PECA SEARA KG" | subgrupo=BACON(2026)
+"BACON FATIADO SADIA 250G" (EAN 789...) -> "BACON SADIA 250G FATIADO" | subgrupo=BACON(2026)
 "PASTILHA MORANGO DOCILE 17G" -> "PASTILHA DOCILE 17G MORANGO" | subgrupo=PASTILHAS(1162)
 "DROPS HALLS MENTA 28GR" -> "DROPS HALLS 28G MENTA" | subgrupo=BALAS(1160)
 "VINHO CANCAO TINTO 750ML" -> "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
