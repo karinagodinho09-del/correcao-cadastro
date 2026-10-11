@@ -692,8 +692,8 @@ function normUnid(t){
           .replace(/^(\d+(?:[.,]\d+)?)\s*(LITROS|LTS|LT)$/,'$1L')
           .replace(/^(\d+(?:[.,]\d+)?)\s*MLS$/,'$1ML');
 }
-const PREFIXOS_SETOR = ['FLV','PANIF','ACOU','BOV','AVE','SUI','PEI'];
-const ABREV = [['TEMPERADO','TEMP'],['TEMPERADA','TEMP'],['CONGELADO','CONG'],['CONGELADA','CONG'],
+const PREFIXOS_SETOR = ['FLV','PANIF','PRODUCAO','ACOU','BOV','AVE','SUI','PEI'];
+const ABREV = [['MISTURA','MIST'],['TEMPERADO','TEMP'],['TEMPERADA','TEMP'],['CONGELADO','CONG'],['CONGELADA','CONG'],
   ['TRADICIONAL','TRAD'],['ORIGINAL','ORIG'],['INTEGRAL','INT'],['CHOCOLATE','CHOC'],['DESNATADO','DESN'],
   ['REFRIGERANTE','REFRIG'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
   ['BISCOITO','BISC'],['LIQUIDO','LIQ'],['SEM','S/'],['COM','C/']];
@@ -706,6 +706,13 @@ function encurtarDesc(d){
     w=w.map(x=>x===de?para:x);
   }
   let r=w.join(' ');
+  if(r.length<=35) return {desc:r, cortou:false};
+  // Tira palavras de ligacao (DE, DA, DO...) antes de perder informacao
+  const LIG=['DE','DA','DO','DAS','DOS','E'];
+  for(let i=w.length-1; i>0 && w.join(' ').length>35; i--){
+    if(LIG.includes(w[i])) w.splice(i,1);
+  }
+  r=w.join(' ');
   if(r.length<=35) return {desc:r, cortou:false};
   // Tira palavras do fim (menos a 1a e as de gramatura) ate caber
   for(let i=w.length-1; i>0 && w.join(' ').length>35; i--){
@@ -741,14 +748,20 @@ function idPaoQueijo(){
 }
 function tirarPrefixo(d){
   const w=d.split(' ');
-  if(w[0]==='FLV'||w[0]==='PANIF') w.shift();
+  if(w[0]==='FLV'||w[0]==='PANIF'||w[0]==='PRODUCAO') w.shift();
   else if(w[0]==='ACOU'){ w.shift(); if(['BOV','AVE','SUI','PEI'].includes(w[0])) w.shift(); }
   return w.join(' ');
+}
+// Insumo de producao (embalagem grande para fazer outros produtos): so os casos claros
+const RE_INSUMO = /\b(MISTURA|PRE MISTURA|PREMIX|MELHORADOR|FARINHA|ACUCAR|FERMENTO|GORDURA|MARGARINA|RECHEIO|COBERTURA|FUBA|AMIDO|POLVILHO|GLUCOSE|ESSENCIA|EMULSIFICANTE)\b/;
+function insumoProducao(orig){
+  const m=tirarPrefixo(orig).match(/(\d+(?:[.,]\d+)?)\s*KG\b/);
+  return !!m && parseFloat(m[1].replace(',','.'))>=10 && RE_INSUMO.test(orig);
 }
 // Corte comum -> corte temperado quando a descricao diz TEMPERADO
 const SUB_TEMPERADO = {'2000':'2003','2001':'2003','2006':'2007','2012':'2013'};
 // Prefixo de setor precisa bater com o departamento do subgrupo
-const PREFIXO_DEPTO = {'FLV':'3','PANIF':'4','ACOU':'2'};
+const PREFIXO_DEPTO = {'FLV':'3','PANIF':'4','PRODUCAO':'4','ACOU':'2'};
 
 // Confere a sugestao da IA. Retorna {desc, sub, revisar:[motivos]}
 function conferirIA(orig, ean, descIA, subIA){
@@ -775,6 +788,9 @@ function conferirIA(orig, ean, descIA, subIA){
     if(pecaKG) desc='ACOU '+desc;
   }
   if(paoQueijoProd) desc='PANIF '+tirarPrefixo(desc);
+  // Insumo de producao: subgrupo 4016 e prefixo PRODUCAO (no lugar de PANIF)
+  if(insumoProducao(o)) sub='4016';
+  if(sub==='4016') desc='PRODUCAO '+tirarPrefixo(desc);
   // 2. Prefixo x departamento
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
@@ -845,6 +861,7 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
 - EAN NAO comeca com 7 nem 0 (codigo interno curto) E produto pesavel/producao = ADICIONE o prefixo do setor no inicio da descricao:
   Hortifruti (alface, tomate, banana, maca, cebola, batata, verdura, legume, fruta, ovo granel) = FLV
   Padaria/Producao propria (pao, bolo, salgado, torta, rocambole, cuca, sonho) = PANIF
+  INSUMO para produzir outros produtos (embalagem grande: mistura/pre-mistura 25KG, farinha 25KG/50KG, melhorador, gordura 20KG, recheio/cobertura em balde) = PRODUCAO (nunca PANIF), subgrupo PRODUTOS PARA PRODUCAO(4016). Use so quando estiver claro que e insumo.
   Carne bovina (bovino, alcatra, patinho, coxao, acem, musculo, mignon, costela bovina) = ACOU BOV
   Aves (frango, peito, coxa, sobrecoxa, asa, peru) = ACOU AVE
   Suino (porco, pernil, costela suina, lombo, bisteca) = ACOU SUI
@@ -866,6 +883,7 @@ EXEMPLOS:
 "PAO FRANCES KG" (EAN interno) -> "PANIF PAO FRANCES KG" | subgrupo=PAES TRADICIONAIS(4004)
 "QUIBE ASSADO KG" (EAN interno) -> "PANIF QUIBE ASSADO KG" | subgrupo=SALGADOS ASSADOS(4006)
 "PAO DE QUEIJO KG" (EAN interno) -> "PANIF PAO DE QUEIJO KG" | subgrupo=${HIERARCHY_DATA[idPaoQueijo()].subgrupo}(${idPaoQueijo()}) (producao propria, nao e frios)
+"MISTURA WERNERMIX 25KG PRETO" -> "PRODUCAO MIST WERNERMIX 25KG PRETO" | subgrupo=PRODUTOS PARA PRODUCAO(4016)
 "COXINHA FRANGO UN" (EAN interno) -> "PANIF COXINHA FRANGO UN" | subgrupo=SALGADOS FRITOS(4007)
 "FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG" | subgrupo=CORTES DE FRANGO(2012)
 "LOMBO SUINO TEMPERADO KG" (EAN interno) -> "ACOU SUI LOMBO SUINO TEMPERADO KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
@@ -922,7 +940,7 @@ SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
 3004=VERDURAS FOLHOSAS,3005=TEMPEROS FRESCOS,3007=ALHO A GRANEL,3008=OVOS BRANCOS,3009=OVOS VERMELHOS,
 4000=BOLO SIMPLES,4001=BOLO RECHEADO/COM COBERTURA,4002=TORTAS DOCES,4003=DOCES E SOBREMESAS CONF,4015=FOLHADOS DOCE,4017=BISCOITOS E BOLACHAS FP,
 4004=PAES TRADICIONAIS,4005=PAES ESPECIAIS,4019=PAO DE QUEIJO,4011=BROAS,4012=PAES DOCES E RECHEADOS,4013=SANDUICHES PRONTO,
-4006=SALGADOS ASSADOS,4007=SALGADOS FRITOS,4014=TORTAS SALGADAS,
+4006=SALGADOS ASSADOS,4007=SALGADOS FRITOS,4014=TORTAS SALGADAS,4016=PRODUTOS PARA PRODUCAO,
 5000=BEBIDA LACTEA,5001=IOGURTE,5002=PETIT SUISSE,5003=SOBREMESA LACTEA,5004=LEITE FERMENTADO,
 5005=QUEIJO RALADO,5006=CREME DE LEITE FRESCO/NATA,5007=ACHOCOLATADO PRONTO,5008=REQUEIJAO,
 5009=QUEIJO FATIADO,5010=QUEIJO PECA/PEDACO,5011=QUEIJO ESPECIAL/DEFUMADO,
