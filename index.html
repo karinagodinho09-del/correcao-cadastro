@@ -757,6 +757,9 @@ function conferirIA(orig, ean, descIA, subIA){
   const sQueijo=subgrupoQueijo(o, sub);
   if(sQueijo) sub=sQueijo;
   if(/\bBACON\b/.test(o)) sub='2026';
+  // Pao de queijo de producao propria (codigo interno, nao congelado) e padaria, nao congelado industrial
+  const paoQueijoProd = /\bPAO DE QUEIJO\b/.test(o) && isInternalEAN(ean) && !/\bCONG/.test(o);
+  if(paoQueijoProd && !sub.startsWith('4')) sub='4005';
   if(!HIERARCHY_DATA[sub]) return {desc, sub:'9999', revisar:['subgrupo inexistente ('+subIA+')']};
   // Prefixo: frios/laticinios/congelados (5xxx) nunca levam; bacon so a peca por KG
   if(sub.startsWith('5')) desc=tirarPrefixo(desc);
@@ -765,6 +768,7 @@ function conferirIA(orig, ean, descIA, subIA){
     desc=tirarPrefixo(desc);
     if(pecaKG) desc='ACOU '+desc;
   }
+  if(paoQueijoProd) desc='PANIF '+tirarPrefixo(desc);
   // 2. Prefixo x departamento
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
@@ -855,6 +859,7 @@ EXEMPLOS:
 "ALFACE CRESPA UN" (EAN interno) -> "FLV ALFACE CRESPA UN" | subgrupo=VERDURAS FOLHOSAS(3004)
 "PAO FRANCES KG" (EAN interno) -> "PANIF PAO FRANCES KG" | subgrupo=PAES TRADICIONAIS(4004)
 "QUIBE ASSADO KG" (EAN interno) -> "PANIF QUIBE ASSADO KG" | subgrupo=SALGADOS ASSADOS(4006)
+"PAO DE QUEIJO KG" (EAN interno) -> "PANIF PAO DE QUEIJO KG" | subgrupo=PAES ESPECIAIS(4005) (producao propria, nao e frios)
 "COXINHA FRANGO UN" (EAN interno) -> "PANIF COXINHA FRANGO UN" | subgrupo=SALGADOS FRITOS(4007)
 "FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG" | subgrupo=CORTES DE FRANGO(2012)
 "LOMBO SUINO TEMPERADO KG" (EAN interno) -> "ACOU SUI LOMBO SUINO TEMPERADO KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
