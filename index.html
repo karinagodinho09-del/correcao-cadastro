@@ -163,6 +163,14 @@ th{padding:5px 8px !important;}
   </div>
 
   <div class="sb-sec">
+    <div class="sb-label">Marcas protegidas</div>
+    <textarea id="marcasProtegidas" class="filter-input" rows="3" placeholder="FORNO DE MINAS, CASA DA VOVO..."
+              style="width:100%;resize:vertical;text-transform:uppercase;font-family:inherit"
+              onchange="salvarMarcas(this.value)"></textarea>
+    <div style="font-size:10px;color:var(--text3)">Separe por vírgula ou linha. A correção nunca altera estas marcas (ex.: não tira o DE de FORNO DE MINAS)</div>
+  </div>
+
+  <div class="sb-sec">
     <div class="sb-label">Empresa / cliente</div>
     <input id="empresaId" placeholder="ex: 2413" oninput="onEmpresaChange()"
            style="width:100%;text-transform:uppercase" title="Código da empresa — separa os produtos internos no banco">
@@ -496,6 +504,7 @@ function initFB(cfg){
       const ok=s.val();
       setDB(ok,ok?'Banco conectado':'Banco offline');
       if(ok) document.getElementById('btnSave').disabled=false;
+      if(ok && !window._marcasCarregadas){ window._marcasCarregadas=true; carregarMarcas(); }
     });
     toast('Firebase conectado!','ok');
   }catch(e){setDB(false,'Erro: '+e.message);toast('Erro Firebase: '+e.message,'err');}
@@ -698,30 +707,82 @@ const ABREV = [['MISTURA','MIST'],['TEMPERADO','TEMP'],['TEMPERADA','TEMP'],['CO
   ['REFRIGERANTE','REFRIG'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
   ['BISCOITO','BISC'],['LIQUIDO','LIQ'],['SEM','S/'],['COM','C/']];
 // Encurta ate 35 chars abreviando palavras inteiras; so corta se nao houver outro jeito
-function encurtarDesc(d){
+function encurtarDesc(d, marca){
   if(d.length<=35) return {desc:d, cortou:false};
   let w=d.split(' ');
+  let prot=idxMarca(w, marca);
   for(const [de,para] of ABREV){
     if(w.join(' ').length<=35) break;
-    w=w.map(x=>x===de?para:x);
+    w=w.map((x,i)=>x===de && !prot.has(i)?para:x);
   }
   let r=w.join(' ');
   if(r.length<=35) return {desc:r, cortou:false};
   // Tira palavras de ligacao (DE, DA, DO...) antes de perder informacao
   const LIG=['DE','DA','DO','DAS','DOS','E'];
   for(let i=w.length-1; i>0 && w.join(' ').length>35; i--){
-    if(LIG.includes(w[i])) w.splice(i,1);
+    if(LIG.includes(w[i]) && !idxMarca(w,marca).has(i)) w.splice(i,1);
   }
   r=w.join(' ');
   if(r.length<=35) return {desc:r, cortou:false};
   // Tira palavras do fim (menos a 1a e as de gramatura) ate caber
   for(let i=w.length-1; i>0 && w.join(' ').length>35; i--){
-    if(!/\d/.test(w[i]) && w[i]!=='KG' && w[i]!=='UN') w.splice(i,1);
+    if(!/\d/.test(w[i]) && w[i]!=='KG' && w[i]!=='UN' && !idxMarca(w,marca).has(i)) w.splice(i,1);
   }
   r=w.join(' ');
   if(r.length>35){ r=r.substring(0,36); r=r.substring(0,r.lastIndexOf(' ')>0?r.lastIndexOf(' '):35).trim(); }
   return {desc:r, cortou:true};
 }
+// ===== MARCAS =====
+let MARCAS_PROTEGIDAS = [];
+function parseMarcas(txt){
+  return [...new Set(String(txt||'').split(/[,;\n]/).map(normTxt).filter(Boolean))];
+}
+function aplicarMarcas(lista){
+  MARCAS_PROTEGIDAS = lista;
+  const el=document.getElementById('marcasProtegidas');
+  if(el && document.activeElement!==el) el.value=lista.join(', ');
+}
+function salvarMarcas(txt){
+  const lista=parseMarcas(txt);
+  aplicarMarcas(lista);
+  try{ localStorage.setItem('marcasProtegidas', JSON.stringify(lista)); }catch(e){}
+  if(db) db.ref('config/marcas_protegidas').set(lista)
+    .then(()=>toast(lista.length+' marca(s) protegida(s) salva(s)','ok'))
+    .catch(e=>toast('Marcas salvas só neste navegador: '+e.message,'info'));
+}
+async function carregarMarcas(){
+  try{ const l=JSON.parse(localStorage.getItem('marcasProtegidas')||'[]'); if(l.length) aplicarMarcas(l); }catch(e){}
+  if(!db) return;
+  try{
+    const snap=await db.ref('config/marcas_protegidas').get();
+    if(snap.exists()){
+      const l=parseMarcas((snap.val()||[]).join(','));
+      aplicarMarcas(l);
+      try{ localStorage.setItem('marcasProtegidas', JSON.stringify(l)); }catch(e){}
+    }
+  }catch(e){ /* silencioso */ }
+}
+// Posicao (indice da 1a palavra) da sequencia 'seq' dentro de 'w', ou -1
+function acharSeq(w, seq){
+  if(!seq.length) return -1;
+  for(let i=0;i+seq.length<=w.length;i++) if(seq.every((t,j)=>w[i+j]===t)) return i;
+  return -1;
+}
+// Marca do produto: lista protegida (a maior que aparecer) > marca informada pela IA
+function marcaDoProduto(orig, marcaIA){
+  const w=orig.split(' ');
+  const prot=MARCAS_PROTEGIDAS.filter(m=>acharSeq(w,m.split(' '))>=0).sort((a,b)=>b.length-a.length)[0];
+  if(prot) return prot;
+  const m=normTxt(marcaIA);
+  return (m && acharSeq(w,m.split(' '))>=0) ? m : '';
+}
+// Indices das palavras da marca dentro da descricao
+function idxMarca(w, marca){
+  const seq=marca?marca.split(' '):[];
+  const i=acharSeq(w,seq);
+  return i<0 ? new Set() : new Set(seq.map((_,j)=>i+j));
+}
+
 // Subgrupo de salgado pela descricao original (a IA confundia salgado com pao)
 const RE_SALGADO = /\b(QUIBE|KIBE|ESFIRRA|ESFIHA|ESFIRA|EMPADA|EMPADINHA|ENROLADO|ENROLADINHO|FOGAZZA|CALZONE|COXINHA|RISOLE|RISOLES|CROQUETE|BOLINHA DE QUEIJO)\b/;
 function subgrupoSalgado(orig, ean){
@@ -764,7 +825,7 @@ const SUB_TEMPERADO = {'2000':'2003','2001':'2003','2006':'2007','2012':'2013'};
 const PREFIXO_DEPTO = {'FLV':'3','PANIF':'4','PRODUCAO':'4','ACOU':'2'};
 
 // Confere a sugestao da IA. Retorna {desc, sub, revisar:[motivos]}
-function conferirIA(orig, ean, descIA, subIA){
+function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const o=normTxt(orig).replace(/^\*\s*/,'');
   let desc=normTxt(descIA).replace(/^\*\s*/,'');
   let sub=String(subIA||'').trim();
@@ -790,20 +851,28 @@ function conferirIA(orig, ean, descIA, subIA){
   if(paoQueijoProd) desc='PANIF '+tirarPrefixo(desc);
   // Insumo de producao: subgrupo 4016 e prefixo PRODUCAO (no lugar de PANIF)
   if(insumoProducao(o)) sub='4016';
-  if(sub==='4016') desc='PRODUCAO '+tirarPrefixo(desc);
+  const marca=marcaDoProduto(o, marcaIA);
+  // Insumo de producao fica sem marca
+  if(sub==='4016'){
+    let w=tirarPrefixo(desc).split(' ');
+    const im=idxMarca(w, marca);
+    desc='PRODUCAO '+w.filter((_,i)=>!im.has(i)).join(' ');
+  }
   // 2. Prefixo x departamento
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
     revisar.push('prefixo '+pref+' nao combina com '+HIERARCHY_DATA[sub].depto);
   // 2b. Sem DE/DA/DO/DOS/DAS em nenhum produto (CREME DE LEITE -> CREME LEITE)
-  desc=desc.split(' ').filter((t,i)=>i===0 || !['DE','DA','DO','DOS','DAS'].includes(t)).join(' ');
+  // (menos dentro da marca: FORNO DE MINAS continua igual)
+  { const w=desc.split(' '), im=idxMarca(w, sub==='4016'?'':marca);
+    desc=w.filter((t,i)=>i===0 || im.has(i) || !['DE','DA','DO','DOS','DAS'].includes(t)).join(' '); }
   // 3. Pesavel (codigo interno): KG/UN da original sempre no fim
   if(isInternalEAN(ean)){
     const un=o.split(' ').find(t=>t==='KG'||t==='UN');
     if(un) desc=desc.split(' ').filter(t=>t!==un).concat(un).join(' ');
   }
   // 3b. Tamanho: abrevia em vez de cortar no meio
-  const enc=encurtarDesc(desc);
+  const enc=encurtarDesc(desc, sub==='4016'?'':marca);
   desc=enc.desc;
   if(enc.cortou) revisar.push('descricao encurtada para caber em 35');
   // 4. Palavras: nada inventado, gramatura nao pode sumir
@@ -817,6 +886,8 @@ function conferirIA(orig, ean, descIA, subIA){
   const setD=new Set(tokD);
   const perdidas=tokO.filter(t=>/\d/.test(t) && !setD.has(t));
   if(perdidas.length) revisar.push('sumiu: '+perdidas.join(', '));
+  // Marca nao pode sumir (exceto insumo de producao)
+  if(marca && sub!=='4016' && acharSeq(desc.split(' '), marca.split(' '))<0) revisar.push('marca sumiu ou mudou: '+marca);
   return {desc, sub, revisar};
 }
 
@@ -1003,8 +1074,10 @@ ${Object.keys(customNivel1).length?'\nSUBGRUPOS CRIADOS PELA LOJA (use quando o 
 Produtos:
 ${batch.map(p=>`${p.id}|EAN:${p.ean}|${p.descricao}`).join('\n')}
 
+MARCA: informe no campo "marca" a marca exatamente como escrita na descricao original (ex: "FORNO DE MINAS", "Q BOA"). Sem marca (ex: hortifruti, carne a granel) = "".
+
 Responda SOMENTE JSON válido sem markdown:
-[{"id":"<id>","descricao":"<desc corrigida>","idNivel1":<num>}]`;    let parsed = [];
+[{"id":"<id>","descricao":"<desc corrigida>","marca":"<marca ou vazio>","idNivel1":<num>}]`;    let parsed = [];
     try{
       const groqKey = document.getElementById('groqKeyInput')?.value || localStorage.getItem('groqApiKey') || '';
       const claudeKey = document.getElementById('apiKeyInput')?.value || localStorage.getItem('claudeApiKey') || '';
@@ -1070,7 +1143,7 @@ Responda SOMENTE JSON válido sem markdown:
         if(!p) return;
         // PROTECAO: se voce mexeu neste produto enquanto a IA rodava, nao sobrescreve
         if(p.idNivel1!=='9999' || (p._st && p._st!=='orig')){ return; }
-        const c = (s.descricao && s.idNivel1) ? conferirIA(p.descricao, p.ean, s.descricao, s.idNivel1) : null;
+        const c = (s.descricao && s.idNivel1) ? conferirIA(p.descricao, p.ean, s.descricao, s.idNivel1, s.marca) : null;
         // IA nao respondeu ou mandou subgrupo invalido: marca com * para correcao manual
         if(!c || !c.desc || c.sub==='9999' || c.sub==='0'){
           if(!p.descricao.startsWith('*')) p.descricao = '* ' + p.descricao;
@@ -2192,7 +2265,7 @@ function applyReplace() {
 
 // ===== INIT =====
 initFB();
-setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} }, 800);
+setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} try{ carregarMarcas(); }catch(e){} }, 800);
 // Load saved API keys
 const savedClaudeKey = localStorage.getItem('claudeApiKey');
 if (savedClaudeKey) { const el=document.getElementById('apiKeyInput'); if(el) el.value=savedClaudeKey; }
