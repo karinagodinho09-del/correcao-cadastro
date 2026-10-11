@@ -795,6 +795,8 @@ function conferirIA(orig, ean, descIA, subIA){
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
     revisar.push('prefixo '+pref+' nao combina com '+HIERARCHY_DATA[sub].depto);
+  // 2b. Sem DE/DA/DO/DOS/DAS em nenhum produto (CREME DE LEITE -> CREME LEITE)
+  desc=desc.split(' ').filter((t,i)=>i===0 || !['DE','DA','DO','DOS','DAS'].includes(t)).join(' ');
   // 3. Pesavel (codigo interno): KG/UN da original sempre no fim
   if(isInternalEAN(ean)){
     const un=o.split(' ').find(t=>t==='KG'||t==='UN');
@@ -849,6 +851,7 @@ TAREFA: Para cada produto abaixo, defina:
 REGRAS DA DESCRICAO (siga todas, sem excecao):
 - Use SOMENTE palavras que ja estao na descricao original. Nao invente, nao traduza, nao troque por sinonimo.
 - Mudancas permitidas: reordenar; padronizar unidade (GR/GRS->G, LT/LTS->L, MLS->ML); tirar informacao duplicada; adicionar o prefixo de setor (regra abaixo).
+- Tire sempre DE, DA, DO, DOS, DAS (ex: CREME DE LEITE -> CREME LEITE, AGUA DE COCO -> AGUA COCO).
 - Abreviar so se passar de 35 chars (ex: TEMPERADO->TEMP, CONGELADO->CONG, SEM->S/, COM->C/).
 - NUNCA remova gramatura, peso, volume ou a marca (unica excecao: insumo de producao fica sem marca).
 - A marca e nome proprio e pode repetir palavra do produto (ALHO MAIS, Q BOA, BABY SOFT CARE): isso NAO e repeticao.
@@ -883,9 +886,9 @@ EXEMPLOS:
 "ALFACE CRESPA UN" (EAN interno) -> "FLV ALFACE CRESPA UN" | subgrupo=VERDURAS FOLHOSAS(3004)
 "PAO FRANCES KG" (EAN interno) -> "PANIF PAO FRANCES KG" | subgrupo=PAES TRADICIONAIS(4004)
 "QUIBE ASSADO KG" (EAN interno) -> "PANIF QUIBE ASSADO KG" | subgrupo=SALGADOS ASSADOS(4006)
-"PAO DE QUEIJO KG" (EAN interno) -> "PANIF PAO DE QUEIJO KG" | subgrupo=${HIERARCHY_DATA[idPaoQueijo()].subgrupo}(${idPaoQueijo()}) (producao propria, nao e frios)
+"PAO DE QUEIJO KG" (EAN interno) -> "PANIF PAO QUEIJO KG" | subgrupo=${HIERARCHY_DATA[idPaoQueijo()].subgrupo}(${idPaoQueijo()}) (producao propria, nao e frios)
 "MISTURA WERNERMIX 25KG PRETO" -> "PRODUCAO MISTURA 25KG PRETO" | subgrupo=PRODUTOS PARA PRODUCAO(4016) (sem marca)
-"FARINHA DE TRIGO BUNGE 50KG" -> "PRODUCAO FARINHA DE TRIGO 50KG" | subgrupo=PRODUTOS PARA PRODUCAO(4016) (sem marca)
+"FARINHA DE TRIGO BUNGE 50KG" -> "PRODUCAO FARINHA TRIGO 50KG" | subgrupo=PRODUTOS PARA PRODUCAO(4016) (sem marca)
 "COXINHA FRANGO UN" (EAN interno) -> "PANIF COXINHA FRANGO UN" | subgrupo=SALGADOS FRITOS(4007)
 "FILE FRANGO KG" (EAN interno) -> "ACOU AVE FILE FRANGO KG" | subgrupo=CORTES DE FRANGO(2012)
 "LOMBO SUINO TEMPERADO KG" (EAN interno) -> "ACOU SUI LOMBO SUINO TEMPERADO KG" | subgrupo=CORTES SUINOS TEMPERADO(2007)
