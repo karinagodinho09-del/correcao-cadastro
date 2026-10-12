@@ -168,6 +168,7 @@ th{padding:5px 8px !important;}
               style="width:100%;resize:vertical;text-transform:uppercase;font-family:monospace;font-size:11px"
               onchange="salvarDicionario(this.value)"></textarea>
     <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Uma por linha: PALAVRA=COMO FICA. Vale sempre, em toda descrição (a IA e o sistema seguem)</div>
+    <button class="btn btn-secondary btn-sm" style="width:100%;margin-bottom:4px" onclick="sugerirDicionarioBanco()" title="Compara as palavras deste arquivo com os produtos já aprovados no banco">🔎 Sugerir palavras pelo banco</button>
     <button class="btn btn-secondary btn-sm" style="width:100%" onclick="aplicarDicionarioTabela()">📖 Aplicar dicionário na tabela</button>
   </div>
 
@@ -804,6 +805,82 @@ function aplicarDicionarioTabela(){
   toast(n ? n+' descrição(ões) ajustada(s) pelo dicionário' : 'Nenhuma descrição precisou mudar','ok');
 }
 
+// ===== APRENDER COM O BANCO (produtos ja aprovados = padrao da loja) =====
+let _bancoPadrao=null;   // [{d:descricao, n:idNivel1, w:[palavras]}]
+async function carregarBancoPadrao(forcar){
+  if(_bancoPadrao && !forcar) return _bancoPadrao;
+  if(!db) return [];
+  onEmpresaChange();
+  const [g,e]=await Promise.all([
+    db.ref('banco_ean').get(),
+    empresaAtual ? db.ref('banco_empresa/'+empresaAtual).get() : Promise.resolve(null)
+  ]);
+  const lista=[];
+  [g,e].forEach(snap=>{
+    if(!snap || !snap.exists()) return;
+    Object.values(snap.val()).forEach(v=>{
+      // ignora o que a IA antiga salvou sozinha sem aprovacao
+      if(!v || !v.descricao || v.fonte==='ia_auto') return;
+      const d=normTxt(v.descricao);
+      lista.push({d, n:String(v.idNivel1||''), w:d.split(' ')});
+    });
+  });
+  _bancoPadrao=lista;
+  return lista;
+}
+// Ate 'max' produtos aprovados mais parecidos com o lote (mesmas palavras ou abreviacao delas)
+function exemplosDoBanco(batch, max){
+  if(!_bancoPadrao || !_bancoPadrao.length) return [];
+  const usados=new Set(), out=[];
+  batch.forEach(p=>{
+    const w=normTxt(p.descricao).split(' ').filter(t=>t.length>=3 && !/\d/.test(t));
+    if(!w.length) return;
+    let best=[];
+    for(const b of _bancoPadrao){
+      let sc=0;
+      for(const t of w) if(b.w.some(x=>x===t || (x.length>=3 && t.startsWith(x)))) sc++;
+      if(sc>=1) best.push([sc,b]);
+    }
+    best.sort((a,b)=>b[0]-a[0]).slice(0,2).forEach(([,b])=>{
+      if(!usados.has(b.d) && out.length<max){ usados.add(b.d); out.push(b); }
+    });
+  });
+  return out;
+}
+// Compara palavras do arquivo com o banco: se o banco usa sempre a forma curta (REFRI), sugere REFRIGERANTE=REFRI
+async function sugerirDicionarioBanco(){
+  if(!db){ toast('Conecte o Firebase para ler o banco','err'); return; }
+  if(!prods.length){ toast('Carregue um arquivo primeiro','info'); return; }
+  showOv('Lendo produtos aprovados do banco...','');
+  let banco;
+  try{ banco=await carregarBancoPadrao(true); }catch(e){ hideOv(); toast('Erro ao ler o banco: '+e.message,'err'); return; }
+  hideOv();
+  const cont={};
+  banco.forEach(b=>b.w.forEach(t=>{ if(t.length>=2 && !/\d/.test(t)) cont[t]=(cont[t]||0)+1; }));
+  const jaTem=new Set(DICIONARIO.map(x=>x[0]));
+  const palavras=new Set();
+  prods.forEach(p=>normTxt(p._od||p.descricao).split(' ').forEach(t=>{ if(t.length>=5 && !/[\d\/]/.test(t)) palavras.add(t); }));
+  const sug=[];
+  palavras.forEach(v=>{
+    if(jaTem.has(v) || (cont[v]||0)>0) return;   // banco ja usa a palavra inteira
+    let melhor=null;
+    Object.keys(cont).forEach(t=>{
+      if(t.length>=3 && t.length<v.length && v.startsWith(t) && cont[t]>=3 && (!melhor || cont[t]>cont[melhor])) melhor=t;
+    });
+    if(melhor) sug.push([v,melhor,cont[melhor]]);
+  });
+  if(!sug.length){ toast('Nenhuma palavra nova encontrada ('+banco.length+' produtos aprovados lidos)','info'); return; }
+  sug.sort((a,b)=>b[2]-a[2]);
+  const txt=sug.map(x=>x[0]+'='+x[1]).join('\n');
+  if(confirm('Encontrei '+sug.length+' palavra(s) que no banco aparecem sempre abreviadas:\n\n'+
+     sug.slice(0,40).map(x=>x[0]+' = '+x[1]+'   ('+x[2]+'x no banco)').join('\n')+(sug.length>40?'\n...':'')+
+     '\n\nAdicionar ao dicionário? (Você pode apagar as que não quiser no campo depois)')){
+    const el=document.getElementById('dicPalavras');
+    const novo=(el.value.trim()?el.value.trim()+'\n':'')+txt;
+    el.value=novo; salvarDicionario(novo);
+  }
+}
+
 // ===== MARCAS =====
 let MARCAS_PROTEGIDAS = [];
 function parseMarcas(txt){
@@ -969,6 +1046,7 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
 async function runAI(){
   const pend=prods.filter(p=>p.idNivel1==='9999');
   if(!pend.length){toast('Nenhum produto pendente','info');return;}
+  try{ await carregarBancoPadrao(); }catch(e){ console.warn('Banco p/ exemplos:',e); }
   miniIAShow(true); miniIAUpd('0 de '+pend.length,0);
   _pararPedido=false;
   let done=0;
@@ -984,6 +1062,7 @@ async function runAI(){
     const dep=document.getElementById('fDepto')?.value||'all';
     const depNames={'10':'Mercearia','20':'Açougue/Carnes','30':'Hortifruti','40':'Fabricação Própria','50':'Perecíveis/Frios','60':'Bebidas','70':'Limpeza','80':'Perfumaria/Higiene','90':'Bazar'};
     const depHint=dep!=='all'?`\nFOCO: Produtos de ${depNames[dep]||'Supermercado'}.`:'';
+    const exBanco=exemplosDoBanco(batch, 16);
     const prompt=`Você é especialista em cadastro de produtos para supermercado no Brasil.${depHint}
 
 TAREFA: Para cada produto abaixo, defina:
@@ -1145,7 +1224,7 @@ SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
 9105=CHINELOS E SANDALIAS,9108=ROUPAS E ACESSORIOS,9109=MEIAS,
 9110=MAMADEIRAS,9111=CHUPETAS,9113=ROUPAS E ACESSORIOS DE BEBE
 ${Object.keys(customNivel1).length?'\nSUBGRUPOS CRIADOS PELA LOJA (use quando o produto for exatamente disso):\n'+Object.entries(customNivel1).map(([id,v])=>id+'='+v.subgrupo).join(','):''}
-
+${exBanco.length?'\nEXEMPLOS JA APROVADOS NESTA LOJA (copie este padrao de escrita, abreviacao e subgrupo):\n'+exBanco.map(b=>'"'+b.d+'" | subgrupo='+b.n).join('\n')+'\n':''}
 Produtos:
 ${batch.map(p=>`${p.id}|EAN:${p.ean}|${p.descricao}`).join('\n')}
 
