@@ -973,6 +973,14 @@ function insumoProducao(orig){
   const m=tirarPrefixo(orig).match(/(\d+(?:[.,]\d+)?)\s*KG\b/);
   return !!m && parseFloat(m[1].replace(',','.'))>=10 && RE_INSUMO.test(orig);
 }
+// Fiambreria: produto que COMECA com o nome do frio (evita SANDUICHE/PIZZA DE PRESUNTO)
+const FIAMBRERIA = [[/^APRESUNTADO\b/,'5014'],[/^PRESUNTO\b/,'5015'],[/^MORTADELA\b/,'5016'],
+  [/^(PEITO (DE )?PERU|BLANQUET)\b/,'5017'],[/^(SALAME|SALAMINHO)\b/,'5021']];
+function subgrupoFiambreria(orig){
+  const o=tirarPrefixo(orig);
+  const r=FIAMBRERIA.find(([re])=>re.test(o));
+  return r ? r[1] : null;
+}
 // Curau: producao propria -> doces/sobremesas; po -> po para pudim; pronto industrial -> sobremesa lactea
 function subgrupoCurau(orig, ean){
   if(!/\bCURAU\b/.test(orig)) return null;
@@ -996,8 +1004,9 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const sSalg=subgrupoSalgado(o, ean);
   if(sSalg && sub!==sSalg && !(sSalg!=='5036' && (sub==='4006'||sub==='4007'))) sub=sSalg;
   if(/\bTEMPERAD/.test(o) && SUB_TEMPERADO[sub]) sub=SUB_TEMPERADO[sub];
-  // Peito de peru e fiambreria (5017), nunca acougue; o 5xxx tira o prefixo ACOU mais abaixo
-  if(/\bPEITO (DE )?PERU\b/.test(o)) sub='5017';
+  // Frios de fiambreria nunca sao acougue; o 5xxx tira o prefixo ACOU mais abaixo
+  const sFiamb=subgrupoFiambreria(o);
+  if(sFiamb) sub=sFiamb;
   const sCurau=subgrupoCurau(o, ean);
   if(sCurau) sub=sCurau;
   const sQueijo=subgrupoQueijo(o, sub);
@@ -1117,7 +1126,7 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
   Peixe (tilapia, salmao, file de peixe) = ACOU PEI
   Linguica e embutidos de acougue = ACOU
 Nunca repita o prefixo se a descricao ja comecar com ele.
-- PEITO DE PERU (defumado/fatiado/peca) e FIAMBRERIA, nao acougue: subgrupo PEITO DE PERU DEFUMADO(5017), sem prefixo.
+- FIAMBRERIA nao e acougue e nao leva prefixo: MORTADELA(5016), PRESUNTO(5015), APRESUNTADO(5014), PEITO DE PERU(5017), SALAME(5021).
 - Frios, queijos, presunto, mortadela, salame e laticinios NAO levam prefixo (mesmo com codigo interno e vendidos por KG): nao sao padaria nem acougue.
 - BACON: peca vendida por KG (sem gramatura fixa) leva ACOU na frente. Bacon com gramatura fixa na embalagem (ex: 250G) NAO leva prefixo. Os dois vao para BACON(2026).
 
