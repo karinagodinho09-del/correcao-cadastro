@@ -968,6 +968,14 @@ function insumoProducao(orig){
   const m=tirarPrefixo(orig).match(/(\d+(?:[.,]\d+)?)\s*KG\b/);
   return !!m && parseFloat(m[1].replace(',','.'))>=10 && RE_INSUMO.test(orig);
 }
+// Curau: producao propria -> doces/sobremesas; po -> po para pudim; pronto industrial -> sobremesa lactea
+function subgrupoCurau(orig, ean){
+  if(!/\bCURAU\b/.test(orig)) return null;
+  if(/\b(PO|MISTURA)\b/.test(orig)) return '1106';
+  return isInternalEAN(ean) ? '4003' : '5003';
+}
+// Eletrodomestico so com indicio claro (a IA jogava produto desconhecido em 9049)
+const RE_ELETRO = /\b(ELETR\w*|BIVOLT|110V|127V|220V|VOLT\w*|WATTS?|\d+W|LIQUIDIFICADOR|BATEDEIRA|VENTILADOR|FERRO|SANDUICHEIRA|CAFETEIRA|MICROONDAS|FOGAO|FORNO ELETRICO|AIR ?FRYER|FRITADEIRA|SECADOR|CHAPINHA|PRANCHA|ASPIRADOR|TV|TELEVISOR|CARREGADOR|FONE|CABO|USB|CAIXA DE SOM|RADIO|CHUVEIRO|RESISTENCIA|GERADOR|FOTOVOLTAICO|TOMADA|EXTENSAO|BATERIA|PILHA|LANTERNA|MIXER|PROCESSADOR|ESPREMEDOR|TORRADEIRA|GRILL|PANELA ELETRICA)\b/;
 // Corte comum -> corte temperado quando a descricao diz TEMPERADO
 const SUB_TEMPERADO = {'2000':'2003','2001':'2003','2006':'2007','2012':'2013'};
 // Prefixo de setor precisa bater com o departamento do subgrupo
@@ -983,6 +991,8 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const sSalg=subgrupoSalgado(o, ean);
   if(sSalg && sub!==sSalg && !(sSalg!=='5036' && (sub==='4006'||sub==='4007'))) sub=sSalg;
   if(/\bTEMPERAD/.test(o) && SUB_TEMPERADO[sub]) sub=SUB_TEMPERADO[sub];
+  const sCurau=subgrupoCurau(o, ean);
+  if(sCurau) sub=sCurau;
   const sQueijo=subgrupoQueijo(o, sub);
   if(sQueijo) sub=sQueijo;
   if(/\bBACON\b/.test(o)) sub='2026';
@@ -1007,7 +1017,10 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
     const im=idxMarca(w, marca);
     desc='PRODUCAO '+w.filter((_,i)=>!im.has(i)).join(' ');
   }
+  // Curau de producao propria leva PANIF
+  if(sCurau==='4003') desc='PANIF '+tirarPrefixo(desc);
   // 2. Prefixo x departamento
+  if(sub==='9049' && !RE_ELETRO.test(o)) revisar.push('eletrodomestico sem indicio na descricao: confira o subgrupo');
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
     revisar.push('prefixo '+pref+' nao combina com '+HIERARCHY_DATA[sub].depto);
@@ -1131,7 +1144,10 @@ EXEMPLOS:
 "DROPS HALLS MENTA 28GR" -> "BALA HALLS 28G MENTA" | subgrupo=BALAS(1160)
 "VINHO CANCAO TINTO 750ML" -> "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
 "IOGURTE ACTIVIA 170G" -> "IOG ACTIVIA 170G" | subgrupo=IOGURTE(5001)
+"CURAU KG" (EAN interno) -> "PANIF CURAU KG" | subgrupo=DOCES E SOBREMESAS(4003) (e doce de milho, NAO eletrodomestico)
+"CURAU QUATA 200G" (EAN 789...) -> "CURAU QUATA 200G" | subgrupo=SOBREMESA LACTEA(5003)
 "GERADOR FOTOVOLTAICO" -> "GERADOR FOTOVOLTAICO" | subgrupo=ELETRODOMESTICOS E ELETRONICOS(9049)
+Se NAO souber o que e o produto, NAO chute eletrodomestico: escolha o subgrupo de nome mais parecido com o tipo de produto.
 
 PENSE ASSIM: leia o nome do produto → identifique o que é → encontre o subgrupo com nome mais parecido.
 
