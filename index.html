@@ -244,7 +244,7 @@ th{padding:5px 8px !important;}
         </div>
       </div>
       <div style="margin-top:6px">
-        <div style="font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">IA Paga (Claude)</div>
+        <div style="font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">IA Paga (Claude) — recomendada, mais precisa</div>
         <input class="filter-input" id="apiKeyInput" type="password" 
                placeholder="Cole sua API Key do Claude..." 
                style="font-size:11px;margin-bottom:3px"
@@ -1256,8 +1256,8 @@ Responda SOMENTE JSON válido sem markdown:
         hideOv(); return; 
       }
       let txt = '';
-      if (groqKey) {
-        // Try Groq first (free)
+      if (groqKey && !claudeKey) {
+        // Groq (gratuito) so quando nao ha chave do Claude: e bem menos preciso
         const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
@@ -1277,15 +1277,25 @@ Responda SOMENTE JSON válido sem markdown:
         txt=data.choices?.[0]?.message?.content||'';
         if(!txt) console.warn('Groq: resposta vazia', data.choices?.[0]?.finish_reason);
       } else {
-        // Fallback to Claude (paid)
+        // Claude (principal quando ha chave): modelo mais preciso para reconhecer o produto
         const res=await fetch('https://api.anthropic.com/v1/messages',{
           method:'POST',
-          headers:{'Content-Type':'application/json','x-api-key':claudeKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-          body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:2048,messages:[{role:'user',content:prompt}]})
+          headers:{'Content-Type':'application/json','x-api-key':claudeKey,'anthropic-version':'2023-06-01',
+                   'anthropic-dangerous-direct-browser-access':'true','anthropic-beta':'server-side-fallback-2026-07-01'},
+          body:JSON.stringify({
+            model:'claude-opus-5-5',
+            max_tokens:16000,
+            thinking:{type:'adaptive'},
+            output_config:{effort:'medium'},
+            fallbacks:'default',
+            system:prompt.split('Produtos:')[0],
+            messages:[{role:'user',content:'Produtos:'+prompt.split('Produtos:')[1]}]
+          })
         });
         const data=await res.json();
         if(data.error)throw new Error('Claude: '+data.error.message);
-        txt=data.content.map(c=>c.text||'').join('');
+        if(data.stop_reason==='refusal') throw new Error('Claude recusou o lote');
+        txt=(data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('');
       }
       try {
         let limpo = txt.replace(/```json|```/g,'').trim();
@@ -1314,8 +1324,11 @@ Responda SOMENTE JSON válido sem markdown:
         // PROTECAO: se voce mexeu neste produto enquanto a IA rodava, nao sobrescreve
         if(p.idNivel1!=='9999' || (p._st && p._st!=='orig')){ return; }
         const c = (s.descricao && s.idNivel1) ? conferirIA(p.descricao, p.ean, s.descricao, s.idNivel1, s.marca) : null;
-        // IA nao respondeu ou mandou subgrupo invalido: marca com * para correcao manual
-        if(!c || !c.desc || c.sub==='9999' || c.sub==='0'){
+        // IA nao respondeu, mandou subgrupo invalido ou INVENTOU palavra (ex: AZEITE para estilete):
+        // a sugestao inteira e descartada e o produto fica com * para correcao manual
+        const inventou = c && c.revisar.some(r=>r.startsWith('palavra nova'));
+        if(inventou) console.warn('IA descartada ('+c.revisar.join(' | ')+'):', p.descricao, '->', s.descricao, s.idNivel1);
+        if(!c || !c.desc || c.sub==='9999' || c.sub==='0' || inventou){
           if(!p.descricao.startsWith('*')) p.descricao = '* ' + p.descricao;
           p._st='manual';
         } else {
