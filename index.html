@@ -244,7 +244,7 @@ th{padding:5px 8px !important;}
         </div>
       </div>
       <div style="margin-top:6px">
-        <div style="font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">IA Paga (Claude) — recomendada, mais precisa</div>
+        <div style="font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">IA Paga (Claude) — recomendada</div>
         <input class="filter-input" id="apiKeyInput" type="password" 
                placeholder="Cole sua API Key do Claude..." 
                style="font-size:11px;margin-bottom:3px"
@@ -252,6 +252,12 @@ th{padding:5px 8px !important;}
         <div style="font-size:10px;color:var(--text3)">
           Em <a href="https://console.anthropic.com" target="_blank" style="color:var(--blue)">console.anthropic.com</a>
         </div>
+        <select class="filter-select" id="claudeModelo" style="margin-top:4px;font-size:11px"
+                onchange="localStorage.setItem('claudeModelo',this.value)" title="Custo aproximado por 1.000 produtos">
+          <option value="claude-haiku-5-5">💰 Econômico (Haiku) — centavos / 1.000 produtos</option>
+          <option value="claude-sonnet-5-5">⚖️ Equilibrado (Sonnet) — ~US$ 2 / 1.000</option>
+          <option value="claude-opus-5-5">🎯 Máximo (Opus) — ~US$ 5 / 1.000</option>
+        </select>
       </div>
     </div>
     <div id="progInfo" class="info-text" style="display:none"></div>
@@ -1321,17 +1327,20 @@ Responda SOMENTE JSON válido sem markdown:
         txt=data.choices?.[0]?.message?.content||'';
         if(!txt) console.warn('Groq: resposta vazia', data.choices?.[0]?.finish_reason);
       } else {
-        // Claude (principal quando ha chave): modelo mais preciso para reconhecer o produto
+        // Claude (principal quando ha chave). Modelo escolhido no menu: Haiku (padrao, barato), Sonnet ou Opus
+        const modeloClaude = document.getElementById('claudeModelo')?.value || 'claude-haiku-5-5';
         const res=await fetch('https://api.anthropic.com/v1/messages',{
           method:'POST',
-          headers:{'Content-Type':'application/json','x-api-key':claudeKey,'anthropic-version':'2023-06-01',
-                   'anthropic-dangerous-direct-browser-access':'true','anthropic-beta':'server-side-fallback-2026-07-01'},
+          headers:Object.assign({'Content-Type':'application/json','x-api-key':claudeKey,'anthropic-version':'2023-06-01',
+                   'anthropic-dangerous-direct-browser-access':'true'},
+                   modeloClaude==='claude-haiku-5-5' ? {} : {'anthropic-beta':'server-side-fallback-2026-07-01'}),
           body:JSON.stringify({
-            model:'claude-opus-5-5',
+            model:modeloClaude,
             max_tokens:16000,
             thinking:{type:'adaptive'},
             output_config:{effort:'medium'},
-            fallbacks:'default',
+            // fallback de recusa existe em Opus/Sonnet; o Haiku nao tem
+            ...(modeloClaude==='claude-haiku-5-5' ? {} : {fallbacks:'default'}),
             // Parte fixa no system com cache: os lotes seguintes pagam ~10% dessa parte
             system:[{type:'text',text:prompt.split('<<<LOTE>>>')[0],cache_control:{type:'ephemeral'}}],
             messages:[{role:'user',content:prompt.split('<<<LOTE>>>')[1]}]
@@ -2497,6 +2506,7 @@ setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} try{ carregarMarcas
 // Load saved API keys
 const savedClaudeKey = localStorage.getItem('claudeApiKey');
 if (savedClaudeKey) { const el=document.getElementById('apiKeyInput'); if(el) el.value=savedClaudeKey; }
+try{ const m=localStorage.getItem('claudeModelo'); const el=document.getElementById('claudeModelo'); if(m && el) el.value=m; }catch(e){}
 const savedGroqKey = localStorage.getItem('groqApiKey');
 if (savedGroqKey) { const el=document.getElementById('groqKeyInput'); if(el) el.value=savedGroqKey; }
 // Recuperar trabalho nao finalizado (se houver)
