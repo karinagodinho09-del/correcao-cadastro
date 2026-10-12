@@ -584,7 +584,7 @@ async function runBanco(){
     toast('Preencha o código da empresa para recuperar os produtos internos','info');
   }
   showOv('Consultando banco de EANs...','');
-  let found=0, foundEmp=0;
+  let found=0, foundEmp=0, iaAntiga=0;
   const bsz=50;
   for(let i=0;i<targets.length;i+=bsz){
     const batch=targets.slice(i,i+bsz);
@@ -602,8 +602,12 @@ async function runBanco(){
         const snap=await db.ref(ref).get();
         if(snap.exists()){
           const d=snap.val();
-          if(!soSub) p.descricao=d.descricao;
-          p.idNivel1=String(d.idNivel1);
+          // Gravado pela IA antiga sem aprovacao: nao confia, deixa pendente para a IA nova + regras
+          if(d.fonte==='ia_auto'){ semMatch++; iaAntiga++; return; }
+          // Mesmo vindo do banco, passa pelas regras fixas (subgrupo, prefixo, dicionario, DE/DA, KG no fim)
+          const c=conferirIA(p._od||p.descricao, p.ean, d.descricao, String(d.idNivel1), '');
+          if(!soSub) p.descricao=c.desc;
+          p.idNivel1 = (c.sub && c.sub!=='9999') ? c.sub : String(d.idNivel1);
           p._st='banco'; p._src = interno?'Empresa':'Banco';
           if(interno) foundEmp++; else found++;
         } else { semMatch++; }
@@ -613,6 +617,7 @@ async function runBanco(){
     updateStats(); salvarProgresso();
   }
   hideOv();hideUpdOv();applyFilters();updateStats();
+  if(iaAntiga) setTimeout(()=>toast(iaAntiga+' produto(s) do banco gravados pela IA antiga sem aprovação foram ignorados — rode a IA neles','info'),3500);
   const pulados = semEmpresa ? internos : 0;
   const totalFound = found + foundEmp;
   if(!(erros>0 && totalFound===0) && !(totalFound===0)){
