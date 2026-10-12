@@ -163,6 +163,16 @@ th{padding:5px 8px !important;}
   </div>
 
   <div class="sb-sec">
+    <div class="sb-label">Dicionário de palavras</div>
+    <textarea id="dicPalavras" class="filter-input" rows="5" placeholder="REFRIGERANTE=REFRI&#10;IOGURTE=IOG"
+              style="width:100%;resize:vertical;text-transform:uppercase;font-family:monospace;font-size:11px"
+              onchange="salvarDicionario(this.value)"></textarea>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Uma por linha: PALAVRA=COMO FICA. Vale sempre, em toda descrição (a IA e o sistema seguem)</div>
+    <button class="btn btn-secondary btn-sm" style="width:100%;margin-bottom:4px" onclick="sugerirDicionarioBanco()" title="Compara as palavras deste arquivo com os produtos já aprovados no banco">🔎 Sugerir palavras pelo banco</button>
+    <button class="btn btn-secondary btn-sm" style="width:100%" onclick="aplicarDicionarioTabela()">📖 Aplicar dicionário na tabela</button>
+  </div>
+
+  <div class="sb-sec">
     <div class="sb-label">Marcas protegidas</div>
     <textarea id="marcasProtegidas" class="filter-input" rows="3" placeholder="FORNO DE MINAS, CASA DA VOVO..."
               style="width:100%;resize:vertical;text-transform:uppercase;font-family:inherit"
@@ -234,7 +244,7 @@ th{padding:5px 8px !important;}
         </div>
       </div>
       <div style="margin-top:6px">
-        <div style="font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">IA Paga (Claude)</div>
+        <div style="font-size:10px;font-weight:600;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.8px">IA Paga (Claude) — recomendada, mais precisa</div>
         <input class="filter-input" id="apiKeyInput" type="password" 
                placeholder="Cole sua API Key do Claude..." 
                style="font-size:11px;margin-bottom:3px"
@@ -504,7 +514,7 @@ function initFB(cfg){
       const ok=s.val();
       setDB(ok,ok?'Banco conectado':'Banco offline');
       if(ok) document.getElementById('btnSave').disabled=false;
-      if(ok && !window._marcasCarregadas){ window._marcasCarregadas=true; carregarMarcas(); }
+      if(ok && !window._marcasCarregadas){ window._marcasCarregadas=true; carregarMarcas(); carregarDicionario(); }
     });
     toast('Firebase conectado!','ok');
   }catch(e){setDB(false,'Erro: '+e.message);toast('Erro Firebase: '+e.message,'err');}
@@ -574,7 +584,7 @@ async function runBanco(){
     toast('Preencha o código da empresa para recuperar os produtos internos','info');
   }
   showOv('Consultando banco de EANs...','');
-  let found=0, foundEmp=0;
+  let found=0, foundEmp=0, iaAntiga=0;
   const bsz=50;
   for(let i=0;i<targets.length;i+=bsz){
     const batch=targets.slice(i,i+bsz);
@@ -592,8 +602,12 @@ async function runBanco(){
         const snap=await db.ref(ref).get();
         if(snap.exists()){
           const d=snap.val();
-          if(!soSub) p.descricao=d.descricao;
-          p.idNivel1=String(d.idNivel1);
+          // Gravado pela IA antiga sem aprovacao: nao confia, deixa pendente para a IA nova + regras
+          if(d.fonte==='ia_auto'){ semMatch++; iaAntiga++; return; }
+          // Mesmo vindo do banco, passa pelas regras fixas (subgrupo, prefixo, dicionario, DE/DA, KG no fim)
+          const c=conferirIA(p._od||p.descricao, p.ean, d.descricao, String(d.idNivel1), '');
+          if(!soSub) p.descricao=c.desc;
+          p.idNivel1 = (c.sub && c.sub!=='9999') ? c.sub : String(d.idNivel1);
           p._st='banco'; p._src = interno?'Empresa':'Banco';
           if(interno) foundEmp++; else found++;
         } else { semMatch++; }
@@ -603,6 +617,7 @@ async function runBanco(){
     updateStats(); salvarProgresso();
   }
   hideOv();hideUpdOv();applyFilters();updateStats();
+  if(iaAntiga) setTimeout(()=>toast(iaAntiga+' produto(s) do banco gravados pela IA antiga sem aprovação foram ignorados — rode a IA neles','info'),3500);
   const pulados = semEmpresa ? internos : 0;
   const totalFound = found + foundEmp;
   if(!(erros>0 && totalFound===0) && !(totalFound===0)){
@@ -704,7 +719,7 @@ function normUnid(t){
 const PREFIXOS_SETOR = ['FLV','PANIF','PRODUCAO','ACOU','BOV','AVE','SUI','PEI'];
 const ABREV = [['MISTURA','MIST'],['TEMPERADO','TEMP'],['TEMPERADA','TEMP'],['CONGELADO','CONG'],['CONGELADA','CONG'],
   ['TRADICIONAL','TRAD'],['ORIGINAL','ORIG'],['INTEGRAL','INT'],['CHOCOLATE','CHOC'],['DESNATADO','DESN'],
-  ['REFRIGERANTE','REFRIG'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
+  ['REFRIGERANTE','REFRI'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
   ['BISCOITO','BISC'],['LIQUIDO','LIQ'],['SEM','S/'],['COM','C/']];
 // Encurta ate 35 chars abreviando palavras inteiras; so corta se nao houver outro jeito
 function encurtarDesc(d, marca){
@@ -732,6 +747,145 @@ function encurtarDesc(d, marca){
   if(r.length>35){ r=r.substring(0,36); r=r.substring(0,r.lastIndexOf(' ')>0?r.lastIndexOf(' '):35).trim(); }
   return {desc:r, cortou:true};
 }
+// ===== DICIONARIO DE PALAVRAS (padrao da loja: REFRIGERANTE -> REFRI) =====
+const DICIONARIO_PADRAO = [['REFRIGERANTE','REFRI'],['IOGURTE','IOG'],['DESODORANTE','DESOD'],['DROPS','BALA']];
+let DICIONARIO = DICIONARIO_PADRAO.slice();
+function parseDicionario(txt){
+  const out=[];
+  String(txt||'').split(/\n|;/).forEach(l=>{
+    const m=l.split(/=|->/);
+    if(m.length<2) return;
+    const de=normTxt(m[0]), para=normTxt(m.slice(1).join(' '));
+    if(de && !out.some(x=>x[0]===de)) out.push([de,para]);
+  });
+  return out;
+}
+function aplicarDicionarioLista(lista){
+  DICIONARIO = lista;
+  const el=document.getElementById('dicPalavras');
+  if(el && document.activeElement!==el) el.value=lista.map(x=>x[0]+'='+x[1]).join('\n');
+}
+function salvarDicionario(txt){
+  const lista=parseDicionario(txt);
+  aplicarDicionarioLista(lista);
+  try{ localStorage.setItem('dicPalavras', JSON.stringify(lista)); }catch(e){}
+  if(db) db.ref('config/dicionario_palavras').set(lista.map(x=>x[0]+'='+x[1]))
+    .then(()=>toast(lista.length+' palavra(s) no dicionário salvas','ok'))
+    .catch(e=>toast('Dicionário salvo só neste navegador: '+e.message,'info'));
+}
+async function carregarDicionario(){
+  try{ const l=JSON.parse(localStorage.getItem('dicPalavras')||'null'); aplicarDicionarioLista(l&&l.length?l:DICIONARIO_PADRAO.slice()); }catch(e){}
+  if(!db) return;
+  try{
+    const snap=await db.ref('config/dicionario_palavras').get();
+    if(snap.exists()){
+      const l=parseDicionario((snap.val()||[]).join('\n'));
+      aplicarDicionarioLista(l);
+      try{ localStorage.setItem('dicPalavras', JSON.stringify(l)); }catch(e){}
+    }
+  }catch(e){ /* silencioso */ }
+}
+// Troca palavras/expressoes inteiras do dicionario; nao mexe dentro da marca
+function aplicarDicionario(desc, marca){
+  let d=' '+desc+' ';
+  const temMarca = marca && d.includes(' '+marca+' ');
+  if(temMarca) d=d.replace(' '+marca+' ',' \u0001 ');
+  [...DICIONARIO].sort((a,b)=>b[0].length-a[0].length).forEach(([de,para])=>{
+    while(d.includes(' '+de+' ')) d=d.replace(' '+de+' ',' '+(para||'')+' ');
+  });
+  if(temMarca) d=d.replace('\u0001',marca);
+  return d.replace(/\s+/g,' ').trim();
+}
+// Botao: aplica o dicionario em todos os produtos ja carregados (inclusive ja corrigidos)
+function aplicarDicionarioTabela(){
+  const el=document.getElementById('dicPalavras');
+  if(el && el.value.trim()) aplicarDicionarioLista(parseDicionario(el.value));
+  let n=0;
+  prods.forEach(p=>{
+    if(!p.descricao) return;
+    const nova=encurtarDesc(aplicarDicionario(normTxt(p.descricao))).desc;
+    if(nova!==p.descricao){ p.descricao=nova; n++; }
+  });
+  applyFilters(); updateStats(); salvarProgresso();
+  toast(n ? n+' descrição(ões) ajustada(s) pelo dicionário' : 'Nenhuma descrição precisou mudar','ok');
+}
+
+// ===== APRENDER COM O BANCO (produtos ja aprovados = padrao da loja) =====
+let _bancoPadrao=null;   // [{d:descricao, n:idNivel1, w:[palavras]}]
+async function carregarBancoPadrao(forcar){
+  if(_bancoPadrao && !forcar) return _bancoPadrao;
+  if(!db) return [];
+  onEmpresaChange();
+  const [g,e]=await Promise.all([
+    db.ref('banco_ean').get(),
+    empresaAtual ? db.ref('banco_empresa/'+empresaAtual).get() : Promise.resolve(null)
+  ]);
+  const lista=[];
+  [g,e].forEach(snap=>{
+    if(!snap || !snap.exists()) return;
+    Object.values(snap.val()).forEach(v=>{
+      // ignora o que a IA antiga salvou sozinha sem aprovacao
+      if(!v || !v.descricao || v.fonte==='ia_auto') return;
+      const d=normTxt(v.descricao);
+      lista.push({d, n:String(v.idNivel1||''), w:d.split(' ')});
+    });
+  });
+  _bancoPadrao=lista;
+  return lista;
+}
+// Ate 'max' produtos aprovados mais parecidos com o lote (mesmas palavras ou abreviacao delas)
+function exemplosDoBanco(batch, max){
+  if(!_bancoPadrao || !_bancoPadrao.length) return [];
+  const usados=new Set(), out=[];
+  batch.forEach(p=>{
+    const w=normTxt(p.descricao).split(' ').filter(t=>t.length>=3 && !/\d/.test(t));
+    if(!w.length) return;
+    let best=[];
+    for(const b of _bancoPadrao){
+      let sc=0;
+      for(const t of w) if(b.w.some(x=>x===t || (x.length>=3 && t.startsWith(x)))) sc++;
+      if(sc>=1) best.push([sc,b]);
+    }
+    best.sort((a,b)=>b[0]-a[0]).slice(0,2).forEach(([,b])=>{
+      if(!usados.has(b.d) && out.length<max){ usados.add(b.d); out.push(b); }
+    });
+  });
+  return out;
+}
+// Compara palavras do arquivo com o banco: se o banco usa sempre a forma curta (REFRI), sugere REFRIGERANTE=REFRI
+async function sugerirDicionarioBanco(){
+  if(!db){ toast('Conecte o Firebase para ler o banco','err'); return; }
+  if(!prods.length){ toast('Carregue um arquivo primeiro','info'); return; }
+  showOv('Lendo produtos aprovados do banco...','');
+  let banco;
+  try{ banco=await carregarBancoPadrao(true); }catch(e){ hideOv(); toast('Erro ao ler o banco: '+e.message,'err'); return; }
+  hideOv();
+  const cont={};
+  banco.forEach(b=>b.w.forEach(t=>{ if(t.length>=2 && !/\d/.test(t)) cont[t]=(cont[t]||0)+1; }));
+  const jaTem=new Set(DICIONARIO.map(x=>x[0]));
+  const palavras=new Set();
+  prods.forEach(p=>normTxt(p._od||p.descricao).split(' ').forEach(t=>{ if(t.length>=5 && !/[\d\/]/.test(t)) palavras.add(t); }));
+  const sug=[];
+  palavras.forEach(v=>{
+    if(jaTem.has(v) || (cont[v]||0)>0) return;   // banco ja usa a palavra inteira
+    let melhor=null;
+    Object.keys(cont).forEach(t=>{
+      if(t.length>=3 && t.length<v.length && v.startsWith(t) && cont[t]>=3 && (!melhor || cont[t]>cont[melhor])) melhor=t;
+    });
+    if(melhor) sug.push([v,melhor,cont[melhor]]);
+  });
+  if(!sug.length){ toast('Nenhuma palavra nova encontrada ('+banco.length+' produtos aprovados lidos)','info'); return; }
+  sug.sort((a,b)=>b[2]-a[2]);
+  const txt=sug.map(x=>x[0]+'='+x[1]).join('\n');
+  if(confirm('Encontrei '+sug.length+' palavra(s) que no banco aparecem sempre abreviadas:\n\n'+
+     sug.slice(0,40).map(x=>x[0]+' = '+x[1]+'   ('+x[2]+'x no banco)').join('\n')+(sug.length>40?'\n...':'')+
+     '\n\nAdicionar ao dicionário? (Você pode apagar as que não quiser no campo depois)')){
+    const el=document.getElementById('dicPalavras');
+    const novo=(el.value.trim()?el.value.trim()+'\n':'')+txt;
+    el.value=novo; salvarDicionario(novo);
+  }
+}
+
 // ===== MARCAS =====
 let MARCAS_PROTEGIDAS = [];
 function parseMarcas(txt){
@@ -819,6 +973,42 @@ function insumoProducao(orig){
   const m=tirarPrefixo(orig).match(/(\d+(?:[.,]\d+)?)\s*KG\b/);
   return !!m && parseFloat(m[1].replace(',','.'))>=10 && RE_INSUMO.test(orig);
 }
+// Lista completa de subgrupos para a IA, agrupada por departamento > grupo
+function listaSubgruposCompleta(){
+  const grupos={};
+  Object.entries(HIERARCHY_DATA).forEach(([id,v])=>{
+    if(id==='9999') return;
+    const k=(v.depto||'')+' > '+(v.grupo||'');
+    (grupos[k]=grupos[k]||[]).push(id+'='+v.subgrupo);
+  });
+  return Object.keys(grupos).sort().map(k=>k+': '+grupos[k].join(', ')).join('\n');
+}
+// Bebida alcoolica nunca vai para refrigerante/suco/agua (a IA mandou ICE TEQUILEIRO para 6035)
+const RE_ALCOOL = /\b(VODKA|CACHACA|PINGA|AGUARDENTE|TEQUILA|TEQUILEIRO|GIN|RUM|WHISKY|UISQUE|CONHAQUE|LICOR|VINHO|CERVEJA|CHOPP|ICE|BEATS|CATUABA|SIDRA|SAQUE|VERMOUTH|BATIDA|APERITIVO|ALCOOLICA|COOLER|DRINK|COQUETEL)\b/;
+const SUB_SEM_ALCOOL = ['6025','6026','6027','6028','6029','6030','6031','6033','6034','6035','6036','6037','6042'];
+function subgrupoBebidaMista(orig){
+  // ICE (Smirnoff Ice, Ice Tequileiro...), Beats, coquetel = BEBIDA MISTA; ICE TEA e cha
+  if(/\b(ICE|BEATS|COQUETEL|BEBIDA MISTA)\b/.test(orig) && !/\bICE ?TEA\b|\bCHA\b|SEM ALCOOL/.test(orig)) return '6041';
+  return null;
+}
+// Fiambreria: produto que COMECA com o nome do frio (evita SANDUICHE/PIZZA DE PRESUNTO)
+const FIAMBRERIA = [[/^APRESUNTADO\b/,'5014'],[/^PRESUNTO\b/,'5015'],[/^MORTADELA\b/,'5016'],
+  [/^(PEITO (DE )?PERU|BLANQUET)\b/,'5017'],[/^(SALAME|SALAMINHO)\b/,'5021'],
+  // Bazar > Plasticos (a IA mandava balde para eletrodomestico)
+  [/^BALDES?\b/,'9057'],[/^BACIAS?\b/,'9058'],[/^CABIDES?\b/,'9059']];
+function subgrupoFiambreria(orig){
+  const o=tirarPrefixo(orig);
+  const r=FIAMBRERIA.find(([re])=>re.test(o));
+  return r ? r[1] : null;
+}
+// Curau: producao propria -> doces/sobremesas; po -> po para pudim; pronto industrial -> sobremesa lactea
+function subgrupoCurau(orig, ean){
+  if(!/\bCURAU\b/.test(orig)) return null;
+  if(/\b(PO|MISTURA)\b/.test(orig)) return '1106';
+  return isInternalEAN(ean) ? '4003' : '5003';
+}
+// Eletrodomestico so com indicio claro (a IA jogava produto desconhecido em 9049)
+const RE_ELETRO = /\b(ELETR\w*|BIVOLT|110V|127V|220V|VOLT\w*|WATTS?|\d+W|LIQUIDIFICADOR|BATEDEIRA|VENTILADOR|FERRO|SANDUICHEIRA|CAFETEIRA|MICROONDAS|FOGAO|FORNO ELETRICO|AIR ?FRYER|FRITADEIRA|SECADOR|CHAPINHA|PRANCHA|ASPIRADOR|TV|TELEVISOR|CARREGADOR|FONE|CABO|USB|CAIXA DE SOM|RADIO|CHUVEIRO|RESISTENCIA|GERADOR|FOTOVOLTAICO|TOMADA|EXTENSAO|BATERIA|PILHA|LANTERNA|MIXER|PROCESSADOR|ESPREMEDOR|TORRADEIRA|GRILL|PANELA ELETRICA)\b/;
 // Corte comum -> corte temperado quando a descricao diz TEMPERADO
 const SUB_TEMPERADO = {'2000':'2003','2001':'2003','2006':'2007','2012':'2013'};
 // Prefixo de setor precisa bater com o departamento do subgrupo
@@ -834,6 +1024,13 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const sSalg=subgrupoSalgado(o, ean);
   if(sSalg && sub!==sSalg && !(sSalg!=='5036' && (sub==='4006'||sub==='4007'))) sub=sSalg;
   if(/\bTEMPERAD/.test(o) && SUB_TEMPERADO[sub]) sub=SUB_TEMPERADO[sub];
+  // Frios de fiambreria nunca sao acougue; o 5xxx tira o prefixo ACOU mais abaixo
+  const sFiamb=subgrupoFiambreria(o);
+  if(sFiamb) sub=sFiamb;
+  const sMista=subgrupoBebidaMista(o);
+  if(sMista) sub=sMista;
+  const sCurau=subgrupoCurau(o, ean);
+  if(sCurau) sub=sCurau;
   const sQueijo=subgrupoQueijo(o, sub);
   if(sQueijo) sub=sQueijo;
   if(/\bBACON\b/.test(o)) sub='2026';
@@ -858,7 +1055,12 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
     const im=idxMarca(w, marca);
     desc='PRODUCAO '+w.filter((_,i)=>!im.has(i)).join(' ');
   }
+  // Curau de producao propria leva PANIF
+  if(sCurau==='4003') desc='PANIF '+tirarPrefixo(desc);
   // 2. Prefixo x departamento
+  if(SUB_SEM_ALCOOL.includes(sub) && RE_ALCOOL.test(o) && !/SEM ALCOOL|\bICE ?TEA\b/.test(o))
+    revisar.push('bebida alcoolica em subgrupo sem alcool: confira o subgrupo');
+  if(sub==='9049' && !RE_ELETRO.test(o)) revisar.push('eletrodomestico sem indicio na descricao: confira o subgrupo');
   const pref=desc.split(' ')[0];
   if(PREFIXO_DEPTO[pref] && !sub.startsWith(PREFIXO_DEPTO[pref]))
     revisar.push('prefixo '+pref+' nao combina com '+HIERARCHY_DATA[sub].depto);
@@ -866,6 +1068,8 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   // (menos dentro da marca: FORNO DE MINAS continua igual)
   { const w=desc.split(' '), im=idxMarca(w, sub==='4016'?'':marca);
     desc=w.filter((t,i)=>i===0 || im.has(i) || !['DE','DA','DO','DOS','DAS'].includes(t)).join(' '); }
+  // 2c. Dicionario de palavras da loja (REFRIGERANTE -> REFRI etc.)
+  desc=aplicarDicionario(desc, sub==='4016'?'':marca);
   // 3. Pesavel (codigo interno): KG/UN da original sempre no fim
   if(isInternalEAN(ean)){
     const un=o.split(' ').find(t=>t==='KG'||t==='UN');
@@ -879,7 +1083,7 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const tokO=o.split(' ').map(normUnid);
   const setO=new Set(tokO);
   const tokD=desc.split(' ').map(normUnid);
-  const abrevOK=new Set(ABREV.map(a=>a[1]));
+  const abrevOK=new Set(ABREV.map(a=>a[1]).concat(DICIONARIO.flatMap(x=>x[1].split(' '))));
   const novas=tokD.filter(t=>t && !setO.has(t) && !PREFIXOS_SETOR.includes(t) && !abrevOK.has(t)
     && !tokO.some(x=>x.length>t.length && t.length>=3 && x.startsWith(t)));
   if(novas.length) revisar.push('palavra nova: '+novas.join(', '));
@@ -895,6 +1099,7 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
 async function runAI(){
   const pend=prods.filter(p=>p.idNivel1==='9999');
   if(!pend.length){toast('Nenhum produto pendente','info');return;}
+  try{ await carregarBancoPadrao(); }catch(e){ console.warn('Banco p/ exemplos:',e); }
   miniIAShow(true); miniIAUpd('0 de '+pend.length,0);
   _pararPedido=false;
   let done=0;
@@ -910,6 +1115,9 @@ async function runAI(){
     const dep=document.getElementById('fDepto')?.value||'all';
     const depNames={'10':'Mercearia','20':'Açougue/Carnes','30':'Hortifruti','40':'Fabricação Própria','50':'Perecíveis/Frios','60':'Bebidas','70':'Limpeza','80':'Perfumaria/Higiene','90':'Bazar'};
     const depHint=dep!=='all'?`\nFOCO: Produtos de ${depNames[dep]||'Supermercado'}.`:'';
+    const exBanco=exemplosDoBanco(batch, 16);
+    // Com Claude manda a hierarquia INTEIRA (a lista curta faltava subgrupos, ex: 9057 BALDES)
+    const usaClaude = !!(document.getElementById('apiKeyInput')?.value || localStorage.getItem('claudeApiKey'));
     const prompt=`Você é especialista em cadastro de produtos para supermercado no Brasil.${depHint}
 
 TAREFA: Para cada produto abaixo, defina:
@@ -920,9 +1128,10 @@ TAREFA: Para cada produto abaixo, defina:
 2. idNivel1: escolha o subgrupo cujo NOME melhor descreve o produto
 
 REGRAS DA DESCRICAO (siga todas, sem excecao):
-- Use SOMENTE palavras que ja estao na descricao original. Nao invente, nao traduza, nao troque por sinonimo.
+- Use SOMENTE palavras que ja estao na descricao original (exceto as trocas do PADRAO DE PALAVRAS abaixo). Nao invente, nao traduza, nao troque por sinonimo.
 - Mudancas permitidas: reordenar; padronizar unidade (GR/GRS->G, LT/LTS->L, MLS->ML); tirar informacao duplicada; adicionar o prefixo de setor (regra abaixo).
 - Tire sempre DE, DA, DO, DOS, DAS (ex: CREME DE LEITE -> CREME LEITE, AGUA DE COCO -> AGUA COCO).
+- PADRAO DE PALAVRAS DA LOJA (use SEMPRE, mesmo cabendo em 35): ${DICIONARIO.map(x=>x[0]+'->'+(x[1]||'(remover)')).join(', ')}
 - Abreviar so se passar de 35 chars (ex: TEMPERADO->TEMP, CONGELADO->CONG, SEM->S/, COM->C/).
 - NUNCA remova gramatura, peso, volume ou a marca (unica excecao: insumo de producao fica sem marca).
 - A marca e nome proprio e pode repetir palavra do produto (ALHO MAIS, Q BOA, BABY SOFT CARE): isso NAO e repeticao.
@@ -938,11 +1147,13 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
   Padaria/Producao propria (pao, bolo, salgado, torta, rocambole, cuca, sonho) = PANIF
   INSUMO para produzir outros produtos (embalagem grande: mistura/pre-mistura 25KG, farinha 25KG/50KG, melhorador, gordura 20KG, recheio/cobertura em balde) = PRODUCAO (nunca PANIF), SEM a marca, subgrupo PRODUTOS PARA PRODUCAO(4016). Use so quando estiver claro que e insumo.
   Carne bovina (bovino, alcatra, patinho, coxao, acem, musculo, mignon, costela bovina) = ACOU BOV
-  Aves (frango, peito, coxa, sobrecoxa, asa, peru) = ACOU AVE
+  Aves (frango, peito de frango, coxa, sobrecoxa, asa) = ACOU AVE
   Suino (porco, pernil, costela suina, lombo, bisteca) = ACOU SUI
   Peixe (tilapia, salmao, file de peixe) = ACOU PEI
   Linguica e embutidos de acougue = ACOU
 Nunca repita o prefixo se a descricao ja comecar com ele.
+- BEBIDA ALCOOLICA nunca vai para refrigerante/suco/agua. ICE (Smirnoff Ice, Ice Tequileiro), Beats e coquetel = BEBIDA MISTA(6041).
+- FIAMBRERIA nao e acougue e nao leva prefixo: MORTADELA(5016), PRESUNTO(5015), APRESUNTADO(5014), PEITO DE PERU(5017), SALAME(5021).
 - Frios, queijos, presunto, mortadela, salame e laticinios NAO levam prefixo (mesmo com codigo interno e vendidos por KG): nao sao padaria nem acougue.
 - BACON: peca vendida por KG (sem gramatura fixa) leva ACOU na frente. Bacon com gramatura fixa na embalagem (ex: 250G) NAO leva prefixo. Os dois vao para BACON(2026).
 
@@ -974,15 +1185,18 @@ EXEMPLOS:
 "BACON PECA SEARA KG" (EAN interno) -> "ACOU BACON PECA SEARA KG" | subgrupo=BACON(2026)
 "BACON FATIADO SADIA 250G" (EAN 789...) -> "BACON SADIA 250G FATIADO" | subgrupo=BACON(2026)
 "PASTILHA MORANGO DOCILE 17G" -> "PASTILHA DOCILE 17G MORANGO" | subgrupo=PASTILHAS(1162)
-"DROPS HALLS MENTA 28GR" -> "DROPS HALLS 28G MENTA" | subgrupo=BALAS(1160)
+"DROPS HALLS MENTA 28GR" -> "BALA HALLS 28G MENTA" | subgrupo=BALAS(1160)
 "VINHO CANCAO TINTO 750ML" -> "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
-"IOGURTE ACTIVIA 170G" -> "IOGURTE ACTIVIA 170G" | subgrupo=IOGURTE(5001)
+"IOGURTE ACTIVIA 170G" -> "IOG ACTIVIA 170G" | subgrupo=IOGURTE(5001)
+"CURAU KG" (EAN interno) -> "PANIF CURAU KG" | subgrupo=DOCES E SOBREMESAS(4003) (e doce de milho, NAO eletrodomestico)
+"CURAU QUATA 200G" (EAN 789...) -> "CURAU QUATA 200G" | subgrupo=SOBREMESA LACTEA(5003)
 "GERADOR FOTOVOLTAICO" -> "GERADOR FOTOVOLTAICO" | subgrupo=ELETRODOMESTICOS E ELETRONICOS(9049)
+Se NAO souber o que e o produto, NAO chute eletrodomestico: escolha o subgrupo de nome mais parecido com o tipo de produto.
 
 PENSE ASSIM: leia o nome do produto → identifique o que é → encontre o subgrupo com nome mais parecido.
 
 SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
-1000=ARROZ BRANCO,1007=FEIJAO PRETO,1008=FEIJAO CARIOCA,1010=ACUCAR CRISTAL,1013=ACUCAR REFINADO,
+${usaClaude ? listaSubgruposCompleta() : `1000=ARROZ BRANCO,1007=FEIJAO PRETO,1008=FEIJAO CARIOCA,1010=ACUCAR CRISTAL,1013=ACUCAR REFINADO,
 1016=FARINHA DE TRIGO,1019=FARINHA MANDIOCA,1020=FARINHA MILHO,1024=FAROFA PRONTA,1025=FUBA/POLENTA,
 1026=MILHO PIPOCA,1027=PIPOCA MICROONDAS,1029=AMENDOIM,1035=CUZCUZ,1036=TAPIOCA,1037=POLVILHO,
 1038=SAL REFINADO,1041=MACARRAO COM OVOS,1043=MACARRAO INSTANTANEO,1044=MASSA LASANHA,1045=SOPAS E CALDOS,
@@ -1068,9 +1282,9 @@ SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
 9079=LIVROS E REVISTAS,9081=CADERNOS,9082=CANETAS/LAPIS,9083=OUTROS ACESSORIOS ESCOLARES,
 9085=LENHA,9086=CARVAO,9090=FOSFOROS E ACENDEDORES,9091=JOGOS,9092=BRINQUEDOS GERAL,
 9105=CHINELOS E SANDALIAS,9108=ROUPAS E ACESSORIOS,9109=MEIAS,
-9110=MAMADEIRAS,9111=CHUPETAS,9113=ROUPAS E ACESSORIOS DE BEBE
+9110=MAMADEIRAS,9111=CHUPETAS,9113=ROUPAS E ACESSORIOS DE BEBE`}
 ${Object.keys(customNivel1).length?'\nSUBGRUPOS CRIADOS PELA LOJA (use quando o produto for exatamente disso):\n'+Object.entries(customNivel1).map(([id,v])=>id+'='+v.subgrupo).join(','):''}
-
+<<<LOTE>>>${exBanco.length?'\nEXEMPLOS JA APROVADOS NESTA LOJA (copie este padrao de escrita, abreviacao e subgrupo):\n'+exBanco.map(b=>'"'+b.d+'" | subgrupo='+b.n).join('\n')+'\n':''}
 Produtos:
 ${batch.map(p=>`${p.id}|EAN:${p.ean}|${p.descricao}`).join('\n')}
 
@@ -1086,8 +1300,8 @@ Responda SOMENTE JSON válido sem markdown:
         hideOv(); return; 
       }
       let txt = '';
-      if (groqKey) {
-        // Try Groq first (free)
+      if (groqKey && !claudeKey) {
+        // Groq (gratuito) so quando nao ha chave do Claude: e bem menos preciso
         const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+groqKey},
@@ -1097,8 +1311,8 @@ Responda SOMENTE JSON válido sem markdown:
             temperature:0.1,
             reasoning_effort:'low',
             messages:[
-              {role:'system',content:prompt.split('Produtos:')[0]},
-              {role:'user',content:'Produtos:'+prompt.split('Produtos:')[1]}
+              {role:'system',content:prompt.split('<<<LOTE>>>')[0]},
+              {role:'user',content:prompt.split('<<<LOTE>>>')[1]}
             ]
           })
         });
@@ -1107,15 +1321,26 @@ Responda SOMENTE JSON válido sem markdown:
         txt=data.choices?.[0]?.message?.content||'';
         if(!txt) console.warn('Groq: resposta vazia', data.choices?.[0]?.finish_reason);
       } else {
-        // Fallback to Claude (paid)
+        // Claude (principal quando ha chave): modelo mais preciso para reconhecer o produto
         const res=await fetch('https://api.anthropic.com/v1/messages',{
           method:'POST',
-          headers:{'Content-Type':'application/json','x-api-key':claudeKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-          body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:2048,messages:[{role:'user',content:prompt}]})
+          headers:{'Content-Type':'application/json','x-api-key':claudeKey,'anthropic-version':'2023-06-01',
+                   'anthropic-dangerous-direct-browser-access':'true','anthropic-beta':'server-side-fallback-2026-07-01'},
+          body:JSON.stringify({
+            model:'claude-opus-5-5',
+            max_tokens:16000,
+            thinking:{type:'adaptive'},
+            output_config:{effort:'medium'},
+            fallbacks:'default',
+            // Parte fixa no system com cache: os lotes seguintes pagam ~10% dessa parte
+            system:[{type:'text',text:prompt.split('<<<LOTE>>>')[0],cache_control:{type:'ephemeral'}}],
+            messages:[{role:'user',content:prompt.split('<<<LOTE>>>')[1]}]
+          })
         });
         const data=await res.json();
         if(data.error)throw new Error('Claude: '+data.error.message);
-        txt=data.content.map(c=>c.text||'').join('');
+        if(data.stop_reason==='refusal') throw new Error('Claude recusou o lote');
+        txt=(data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('');
       }
       try {
         let limpo = txt.replace(/```json|```/g,'').trim();
@@ -1144,8 +1369,11 @@ Responda SOMENTE JSON válido sem markdown:
         // PROTECAO: se voce mexeu neste produto enquanto a IA rodava, nao sobrescreve
         if(p.idNivel1!=='9999' || (p._st && p._st!=='orig')){ return; }
         const c = (s.descricao && s.idNivel1) ? conferirIA(p.descricao, p.ean, s.descricao, s.idNivel1, s.marca) : null;
-        // IA nao respondeu ou mandou subgrupo invalido: marca com * para correcao manual
-        if(!c || !c.desc || c.sub==='9999' || c.sub==='0'){
+        // IA nao respondeu, mandou subgrupo invalido ou INVENTOU palavra (ex: AZEITE para estilete):
+        // a sugestao inteira e descartada e o produto fica com * para correcao manual
+        const inventou = c && c.revisar.some(r=>r.startsWith('palavra nova'));
+        if(inventou) console.warn('IA descartada ('+c.revisar.join(' | ')+'):', p.descricao, '->', s.descricao, s.idNivel1);
+        if(!c || !c.desc || c.sub==='9999' || c.sub==='0' || inventou){
           if(!p.descricao.startsWith('*')) p.descricao = '* ' + p.descricao;
           p._st='manual';
         } else {
@@ -2265,7 +2493,7 @@ function applyReplace() {
 
 // ===== INIT =====
 initFB();
-setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} try{ carregarMarcas(); }catch(e){} }, 800);
+setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} try{ carregarMarcas(); }catch(e){} try{ carregarDicionario(); }catch(e){} }, 800);
 // Load saved API keys
 const savedClaudeKey = localStorage.getItem('claudeApiKey');
 if (savedClaudeKey) { const el=document.getElementById('apiKeyInput'); if(el) el.value=savedClaudeKey; }
