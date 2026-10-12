@@ -163,6 +163,15 @@ th{padding:5px 8px !important;}
   </div>
 
   <div class="sb-sec">
+    <div class="sb-label">Dicionário de palavras</div>
+    <textarea id="dicPalavras" class="filter-input" rows="5" placeholder="REFRIGERANTE=REFRI&#10;IOGURTE=IOG"
+              style="width:100%;resize:vertical;text-transform:uppercase;font-family:monospace;font-size:11px"
+              onchange="salvarDicionario(this.value)"></textarea>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Uma por linha: PALAVRA=COMO FICA. Vale sempre, em toda descrição (a IA e o sistema seguem)</div>
+    <button class="btn btn-secondary btn-sm" style="width:100%" onclick="aplicarDicionarioTabela()">📖 Aplicar dicionário na tabela</button>
+  </div>
+
+  <div class="sb-sec">
     <div class="sb-label">Marcas protegidas</div>
     <textarea id="marcasProtegidas" class="filter-input" rows="3" placeholder="FORNO DE MINAS, CASA DA VOVO..."
               style="width:100%;resize:vertical;text-transform:uppercase;font-family:inherit"
@@ -504,7 +513,7 @@ function initFB(cfg){
       const ok=s.val();
       setDB(ok,ok?'Banco conectado':'Banco offline');
       if(ok) document.getElementById('btnSave').disabled=false;
-      if(ok && !window._marcasCarregadas){ window._marcasCarregadas=true; carregarMarcas(); }
+      if(ok && !window._marcasCarregadas){ window._marcasCarregadas=true; carregarMarcas(); carregarDicionario(); }
     });
     toast('Firebase conectado!','ok');
   }catch(e){setDB(false,'Erro: '+e.message);toast('Erro Firebase: '+e.message,'err');}
@@ -704,7 +713,7 @@ function normUnid(t){
 const PREFIXOS_SETOR = ['FLV','PANIF','PRODUCAO','ACOU','BOV','AVE','SUI','PEI'];
 const ABREV = [['MISTURA','MIST'],['TEMPERADO','TEMP'],['TEMPERADA','TEMP'],['CONGELADO','CONG'],['CONGELADA','CONG'],
   ['TRADICIONAL','TRAD'],['ORIGINAL','ORIG'],['INTEGRAL','INT'],['CHOCOLATE','CHOC'],['DESNATADO','DESN'],
-  ['REFRIGERANTE','REFRIG'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
+  ['REFRIGERANTE','REFRI'],['DESODORANTE','DESOD'],['CONDICIONADOR','COND'],['ACHOCOLATADO','ACHOC'],
   ['BISCOITO','BISC'],['LIQUIDO','LIQ'],['SEM','S/'],['COM','C/']];
 // Encurta ate 35 chars abreviando palavras inteiras; so corta se nao houver outro jeito
 function encurtarDesc(d, marca){
@@ -732,6 +741,69 @@ function encurtarDesc(d, marca){
   if(r.length>35){ r=r.substring(0,36); r=r.substring(0,r.lastIndexOf(' ')>0?r.lastIndexOf(' '):35).trim(); }
   return {desc:r, cortou:true};
 }
+// ===== DICIONARIO DE PALAVRAS (padrao da loja: REFRIGERANTE -> REFRI) =====
+const DICIONARIO_PADRAO = [['REFRIGERANTE','REFRI'],['IOGURTE','IOG'],['DESODORANTE','DESOD'],['DROPS','BALA']];
+let DICIONARIO = DICIONARIO_PADRAO.slice();
+function parseDicionario(txt){
+  const out=[];
+  String(txt||'').split(/\n|;/).forEach(l=>{
+    const m=l.split(/=|->/);
+    if(m.length<2) return;
+    const de=normTxt(m[0]), para=normTxt(m.slice(1).join(' '));
+    if(de && !out.some(x=>x[0]===de)) out.push([de,para]);
+  });
+  return out;
+}
+function aplicarDicionarioLista(lista){
+  DICIONARIO = lista;
+  const el=document.getElementById('dicPalavras');
+  if(el && document.activeElement!==el) el.value=lista.map(x=>x[0]+'='+x[1]).join('\n');
+}
+function salvarDicionario(txt){
+  const lista=parseDicionario(txt);
+  aplicarDicionarioLista(lista);
+  try{ localStorage.setItem('dicPalavras', JSON.stringify(lista)); }catch(e){}
+  if(db) db.ref('config/dicionario_palavras').set(lista.map(x=>x[0]+'='+x[1]))
+    .then(()=>toast(lista.length+' palavra(s) no dicionário salvas','ok'))
+    .catch(e=>toast('Dicionário salvo só neste navegador: '+e.message,'info'));
+}
+async function carregarDicionario(){
+  try{ const l=JSON.parse(localStorage.getItem('dicPalavras')||'null'); aplicarDicionarioLista(l&&l.length?l:DICIONARIO_PADRAO.slice()); }catch(e){}
+  if(!db) return;
+  try{
+    const snap=await db.ref('config/dicionario_palavras').get();
+    if(snap.exists()){
+      const l=parseDicionario((snap.val()||[]).join('\n'));
+      aplicarDicionarioLista(l);
+      try{ localStorage.setItem('dicPalavras', JSON.stringify(l)); }catch(e){}
+    }
+  }catch(e){ /* silencioso */ }
+}
+// Troca palavras/expressoes inteiras do dicionario; nao mexe dentro da marca
+function aplicarDicionario(desc, marca){
+  let d=' '+desc+' ';
+  const temMarca = marca && d.includes(' '+marca+' ');
+  if(temMarca) d=d.replace(' '+marca+' ',' \u0001 ');
+  [...DICIONARIO].sort((a,b)=>b[0].length-a[0].length).forEach(([de,para])=>{
+    while(d.includes(' '+de+' ')) d=d.replace(' '+de+' ',' '+(para||'')+' ');
+  });
+  if(temMarca) d=d.replace('\u0001',marca);
+  return d.replace(/\s+/g,' ').trim();
+}
+// Botao: aplica o dicionario em todos os produtos ja carregados (inclusive ja corrigidos)
+function aplicarDicionarioTabela(){
+  const el=document.getElementById('dicPalavras');
+  if(el && el.value.trim()) aplicarDicionarioLista(parseDicionario(el.value));
+  let n=0;
+  prods.forEach(p=>{
+    if(!p.descricao) return;
+    const nova=encurtarDesc(aplicarDicionario(normTxt(p.descricao))).desc;
+    if(nova!==p.descricao){ p.descricao=nova; n++; }
+  });
+  applyFilters(); updateStats(); salvarProgresso();
+  toast(n ? n+' descrição(ões) ajustada(s) pelo dicionário' : 'Nenhuma descrição precisou mudar','ok');
+}
+
 // ===== MARCAS =====
 let MARCAS_PROTEGIDAS = [];
 function parseMarcas(txt){
@@ -866,6 +938,8 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   // (menos dentro da marca: FORNO DE MINAS continua igual)
   { const w=desc.split(' '), im=idxMarca(w, sub==='4016'?'':marca);
     desc=w.filter((t,i)=>i===0 || im.has(i) || !['DE','DA','DO','DOS','DAS'].includes(t)).join(' '); }
+  // 2c. Dicionario de palavras da loja (REFRIGERANTE -> REFRI etc.)
+  desc=aplicarDicionario(desc, sub==='4016'?'':marca);
   // 3. Pesavel (codigo interno): KG/UN da original sempre no fim
   if(isInternalEAN(ean)){
     const un=o.split(' ').find(t=>t==='KG'||t==='UN');
@@ -879,7 +953,7 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const tokO=o.split(' ').map(normUnid);
   const setO=new Set(tokO);
   const tokD=desc.split(' ').map(normUnid);
-  const abrevOK=new Set(ABREV.map(a=>a[1]));
+  const abrevOK=new Set(ABREV.map(a=>a[1]).concat(DICIONARIO.flatMap(x=>x[1].split(' '))));
   const novas=tokD.filter(t=>t && !setO.has(t) && !PREFIXOS_SETOR.includes(t) && !abrevOK.has(t)
     && !tokO.some(x=>x.length>t.length && t.length>=3 && x.startsWith(t)));
   if(novas.length) revisar.push('palavra nova: '+novas.join(', '));
@@ -920,9 +994,10 @@ TAREFA: Para cada produto abaixo, defina:
 2. idNivel1: escolha o subgrupo cujo NOME melhor descreve o produto
 
 REGRAS DA DESCRICAO (siga todas, sem excecao):
-- Use SOMENTE palavras que ja estao na descricao original. Nao invente, nao traduza, nao troque por sinonimo.
+- Use SOMENTE palavras que ja estao na descricao original (exceto as trocas do PADRAO DE PALAVRAS abaixo). Nao invente, nao traduza, nao troque por sinonimo.
 - Mudancas permitidas: reordenar; padronizar unidade (GR/GRS->G, LT/LTS->L, MLS->ML); tirar informacao duplicada; adicionar o prefixo de setor (regra abaixo).
 - Tire sempre DE, DA, DO, DOS, DAS (ex: CREME DE LEITE -> CREME LEITE, AGUA DE COCO -> AGUA COCO).
+- PADRAO DE PALAVRAS DA LOJA (use SEMPRE, mesmo cabendo em 35): ${DICIONARIO.map(x=>x[0]+'->'+(x[1]||'(remover)')).join(', ')}
 - Abreviar so se passar de 35 chars (ex: TEMPERADO->TEMP, CONGELADO->CONG, SEM->S/, COM->C/).
 - NUNCA remova gramatura, peso, volume ou a marca (unica excecao: insumo de producao fica sem marca).
 - A marca e nome proprio e pode repetir palavra do produto (ALHO MAIS, Q BOA, BABY SOFT CARE): isso NAO e repeticao.
@@ -974,9 +1049,9 @@ EXEMPLOS:
 "BACON PECA SEARA KG" (EAN interno) -> "ACOU BACON PECA SEARA KG" | subgrupo=BACON(2026)
 "BACON FATIADO SADIA 250G" (EAN 789...) -> "BACON SADIA 250G FATIADO" | subgrupo=BACON(2026)
 "PASTILHA MORANGO DOCILE 17G" -> "PASTILHA DOCILE 17G MORANGO" | subgrupo=PASTILHAS(1162)
-"DROPS HALLS MENTA 28GR" -> "DROPS HALLS 28G MENTA" | subgrupo=BALAS(1160)
+"DROPS HALLS MENTA 28GR" -> "BALA HALLS 28G MENTA" | subgrupo=BALAS(1160)
 "VINHO CANCAO TINTO 750ML" -> "VINHO CANCAO 750ML TINTO" | subgrupo=VINHO NACIONAL(6017)
-"IOGURTE ACTIVIA 170G" -> "IOGURTE ACTIVIA 170G" | subgrupo=IOGURTE(5001)
+"IOGURTE ACTIVIA 170G" -> "IOG ACTIVIA 170G" | subgrupo=IOGURTE(5001)
 "GERADOR FOTOVOLTAICO" -> "GERADOR FOTOVOLTAICO" | subgrupo=ELETRODOMESTICOS E ELETRONICOS(9049)
 
 PENSE ASSIM: leia o nome do produto → identifique o que é → encontre o subgrupo com nome mais parecido.
@@ -2265,7 +2340,7 @@ function applyReplace() {
 
 // ===== INIT =====
 initFB();
-setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} try{ carregarMarcas(); }catch(e){} }, 800);
+setTimeout(()=>{ try{ carregarHierarquiaExtra(); }catch(e){} try{ carregarMarcas(); }catch(e){} try{ carregarDicionario(); }catch(e){} }, 800);
 // Load saved API keys
 const savedClaudeKey = localStorage.getItem('claudeApiKey');
 if (savedClaudeKey) { const el=document.getElementById('apiKeyInput'); if(el) el.value=savedClaudeKey; }
