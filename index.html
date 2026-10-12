@@ -991,6 +991,8 @@ function conferirIA(orig, ean, descIA, subIA, marcaIA){
   const sSalg=subgrupoSalgado(o, ean);
   if(sSalg && sub!==sSalg && !(sSalg!=='5036' && (sub==='4006'||sub==='4007'))) sub=sSalg;
   if(/\bTEMPERAD/.test(o) && SUB_TEMPERADO[sub]) sub=SUB_TEMPERADO[sub];
+  // Peito de peru e fiambreria (5017), nunca acougue; o 5xxx tira o prefixo ACOU mais abaixo
+  if(/\bPEITO (DE )?PERU\b/.test(o)) sub='5017';
   const sCurau=subgrupoCurau(o, ean);
   if(sCurau) sub=sCurau;
   const sQueijo=subgrupoQueijo(o, sub);
@@ -1105,11 +1107,12 @@ Cada produto vem no formato ID|EAN:codigo|DESCRICAO. Verifique o EAN:
   Padaria/Producao propria (pao, bolo, salgado, torta, rocambole, cuca, sonho) = PANIF
   INSUMO para produzir outros produtos (embalagem grande: mistura/pre-mistura 25KG, farinha 25KG/50KG, melhorador, gordura 20KG, recheio/cobertura em balde) = PRODUCAO (nunca PANIF), SEM a marca, subgrupo PRODUTOS PARA PRODUCAO(4016). Use so quando estiver claro que e insumo.
   Carne bovina (bovino, alcatra, patinho, coxao, acem, musculo, mignon, costela bovina) = ACOU BOV
-  Aves (frango, peito, coxa, sobrecoxa, asa, peru) = ACOU AVE
+  Aves (frango, peito de frango, coxa, sobrecoxa, asa) = ACOU AVE
   Suino (porco, pernil, costela suina, lombo, bisteca) = ACOU SUI
   Peixe (tilapia, salmao, file de peixe) = ACOU PEI
   Linguica e embutidos de acougue = ACOU
 Nunca repita o prefixo se a descricao ja comecar com ele.
+- PEITO DE PERU (defumado/fatiado/peca) e FIAMBRERIA, nao acougue: subgrupo PEITO DE PERU DEFUMADO(5017), sem prefixo.
 - Frios, queijos, presunto, mortadela, salame e laticinios NAO levam prefixo (mesmo com codigo interno e vendidos por KG): nao sao padaria nem acougue.
 - BACON: peca vendida por KG (sem gramatura fixa) leva ACOU na frente. Bacon com gramatura fixa na embalagem (ex: 250G) NAO leva prefixo. Os dois vao para BACON(2026).
 
