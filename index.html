@@ -973,9 +973,21 @@ function insumoProducao(orig){
   const m=tirarPrefixo(orig).match(/(\d+(?:[.,]\d+)?)\s*KG\b/);
   return !!m && parseFloat(m[1].replace(',','.'))>=10 && RE_INSUMO.test(orig);
 }
+// Lista completa de subgrupos para a IA, agrupada por departamento > grupo
+function listaSubgruposCompleta(){
+  const grupos={};
+  Object.entries(HIERARCHY_DATA).forEach(([id,v])=>{
+    if(id==='9999') return;
+    const k=(v.depto||'')+' > '+(v.grupo||'');
+    (grupos[k]=grupos[k]||[]).push(id+'='+v.subgrupo);
+  });
+  return Object.keys(grupos).sort().map(k=>k+': '+grupos[k].join(', ')).join('\n');
+}
 // Fiambreria: produto que COMECA com o nome do frio (evita SANDUICHE/PIZZA DE PRESUNTO)
 const FIAMBRERIA = [[/^APRESUNTADO\b/,'5014'],[/^PRESUNTO\b/,'5015'],[/^MORTADELA\b/,'5016'],
-  [/^(PEITO (DE )?PERU|BLANQUET)\b/,'5017'],[/^(SALAME|SALAMINHO)\b/,'5021']];
+  [/^(PEITO (DE )?PERU|BLANQUET)\b/,'5017'],[/^(SALAME|SALAMINHO)\b/,'5021'],
+  // Bazar > Plasticos (a IA mandava balde para eletrodomestico)
+  [/^BALDES?\b/,'9057'],[/^BACIAS?\b/,'9058'],[/^CABIDES?\b/,'9059']];
 function subgrupoFiambreria(orig){
   const o=tirarPrefixo(orig);
   const r=FIAMBRERIA.find(([re])=>re.test(o));
@@ -1092,6 +1104,8 @@ async function runAI(){
     const depNames={'10':'Mercearia','20':'Açougue/Carnes','30':'Hortifruti','40':'Fabricação Própria','50':'Perecíveis/Frios','60':'Bebidas','70':'Limpeza','80':'Perfumaria/Higiene','90':'Bazar'};
     const depHint=dep!=='all'?`\nFOCO: Produtos de ${depNames[dep]||'Supermercado'}.`:'';
     const exBanco=exemplosDoBanco(batch, 16);
+    // Com Claude manda a hierarquia INTEIRA (a lista curta faltava subgrupos, ex: 9057 BALDES)
+    const usaClaude = !!(document.getElementById('apiKeyInput')?.value || localStorage.getItem('claudeApiKey'));
     const prompt=`Você é especialista em cadastro de produtos para supermercado no Brasil.${depHint}
 
 TAREFA: Para cada produto abaixo, defina:
@@ -1169,7 +1183,7 @@ Se NAO souber o que e o produto, NAO chute eletrodomestico: escolha o subgrupo d
 PENSE ASSIM: leia o nome do produto → identifique o que é → encontre o subgrupo com nome mais parecido.
 
 SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
-1000=ARROZ BRANCO,1007=FEIJAO PRETO,1008=FEIJAO CARIOCA,1010=ACUCAR CRISTAL,1013=ACUCAR REFINADO,
+${usaClaude ? listaSubgruposCompleta() : `1000=ARROZ BRANCO,1007=FEIJAO PRETO,1008=FEIJAO CARIOCA,1010=ACUCAR CRISTAL,1013=ACUCAR REFINADO,
 1016=FARINHA DE TRIGO,1019=FARINHA MANDIOCA,1020=FARINHA MILHO,1024=FAROFA PRONTA,1025=FUBA/POLENTA,
 1026=MILHO PIPOCA,1027=PIPOCA MICROONDAS,1029=AMENDOIM,1035=CUZCUZ,1036=TAPIOCA,1037=POLVILHO,
 1038=SAL REFINADO,1041=MACARRAO COM OVOS,1043=MACARRAO INSTANTANEO,1044=MASSA LASANHA,1045=SOPAS E CALDOS,
@@ -1255,9 +1269,9 @@ SUBGRUPOS DISPONÍVEIS (id=NOME DO SUBGRUPO):
 9079=LIVROS E REVISTAS,9081=CADERNOS,9082=CANETAS/LAPIS,9083=OUTROS ACESSORIOS ESCOLARES,
 9085=LENHA,9086=CARVAO,9090=FOSFOROS E ACENDEDORES,9091=JOGOS,9092=BRINQUEDOS GERAL,
 9105=CHINELOS E SANDALIAS,9108=ROUPAS E ACESSORIOS,9109=MEIAS,
-9110=MAMADEIRAS,9111=CHUPETAS,9113=ROUPAS E ACESSORIOS DE BEBE
+9110=MAMADEIRAS,9111=CHUPETAS,9113=ROUPAS E ACESSORIOS DE BEBE`}
 ${Object.keys(customNivel1).length?'\nSUBGRUPOS CRIADOS PELA LOJA (use quando o produto for exatamente disso):\n'+Object.entries(customNivel1).map(([id,v])=>id+'='+v.subgrupo).join(','):''}
-${exBanco.length?'\nEXEMPLOS JA APROVADOS NESTA LOJA (copie este padrao de escrita, abreviacao e subgrupo):\n'+exBanco.map(b=>'"'+b.d+'" | subgrupo='+b.n).join('\n')+'\n':''}
+<<<LOTE>>>${exBanco.length?'\nEXEMPLOS JA APROVADOS NESTA LOJA (copie este padrao de escrita, abreviacao e subgrupo):\n'+exBanco.map(b=>'"'+b.d+'" | subgrupo='+b.n).join('\n')+'\n':''}
 Produtos:
 ${batch.map(p=>`${p.id}|EAN:${p.ean}|${p.descricao}`).join('\n')}
 
@@ -1284,8 +1298,8 @@ Responda SOMENTE JSON válido sem markdown:
             temperature:0.1,
             reasoning_effort:'low',
             messages:[
-              {role:'system',content:prompt.split('Produtos:')[0]},
-              {role:'user',content:'Produtos:'+prompt.split('Produtos:')[1]}
+              {role:'system',content:prompt.split('<<<LOTE>>>')[0]},
+              {role:'user',content:prompt.split('<<<LOTE>>>')[1]}
             ]
           })
         });
@@ -1305,8 +1319,9 @@ Responda SOMENTE JSON válido sem markdown:
             thinking:{type:'adaptive'},
             output_config:{effort:'medium'},
             fallbacks:'default',
-            system:prompt.split('Produtos:')[0],
-            messages:[{role:'user',content:'Produtos:'+prompt.split('Produtos:')[1]}]
+            // Parte fixa no system com cache: os lotes seguintes pagam ~10% dessa parte
+            system:[{type:'text',text:prompt.split('<<<LOTE>>>')[0],cache_control:{type:'ephemeral'}}],
+            messages:[{role:'user',content:prompt.split('<<<LOTE>>>')[1]}]
           })
         });
         const data=await res.json();
